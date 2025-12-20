@@ -1,10 +1,10 @@
 {
-  "name": "yemot-gemini-server",
+  "name": "minyanim",
   "version": "1.0.0",
-  "description": "Server for Yemot Hamashiach with Gemini AI",
-  "main": "zman.js", // <--- ודא שזה השם הנכון של הקובץ שלך
+  "description": "Minyanim Server",
+  "main": "zman.js",
   "scripts": {
-    "start": "node zman.js" // <--- ודא שזה השם הנכון של הקובץ שלך
+    "start": "node zman.js"
   },
   "dependencies": {
     "axios": "^1.6.0",
