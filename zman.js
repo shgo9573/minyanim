@@ -5,24 +5,23 @@ const axios = require('axios');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// הקישור ששלחת (מעודכן)
-const CSV_URL = 'https://raw.githubusercontent.com/shgo9573/minyanim/refs/heads/main/_%D7%96%D7%9E%D7%A0%D7%99%20%D7%94%D7%AA%D7%A4%D7%99%D7%9C%D7%95%D7%AA%20-%20%D7%92%D7%99%D7%9C%D7%99%D7%95%D7%9F1.csv'; 
+// הקישור הישיר לקובץ ה-CSV שלך
+const CSV_URL = 'https://raw.githubusercontent.com/shgo9573/minyanim/refs/heads/main/_%D7%96%D7%9E%D7%A0%D7%99%20%D7%94%D7%AA%D7%A4%D7%99%D7%9C%D7%95%D7%AA%20-%20%D7%92%D7%99%D7%9C%D7%99%D7%99%D7%95%D7%9F1.csv'; 
 
 app.get('/minyan', async (req, res) => {
   try {
     // קבלת נתונים מימות המשיח
-    // index - המניין הנוכחי (נשמר כמשתנה במערכת)
-    // digit - המקש שנלחץ (נשלח אוטומטית ע"י ימות המשיח)
-    let currentIndex = req.query.index ? parseInt(req.query.index) : null;
+    let currentIndex = req.query.index !== undefined ? parseInt(req.query.index) : null;
     const digit = req.query.digit;
 
-    // משיכת ה-CSV
+    console.log(`Request: index=${currentIndex}, digit=${digit}`);
+
+    // משיכת הנתונים מה-CSV
     const response = await axios.get(CSV_URL);
     const csvData = response.data;
-    const rows = csvData.split('\n');
+    const rows = csvData.split(/\r?\n/); // פיצול שורות תקין
     let minyanim = [];
 
-    // עיבוד השורות (דילוג על כותרת)
     for (let i = 1; i < rows.length; i++) {
       let row = rows[i].trim();
       if (!row) continue;
@@ -45,25 +44,23 @@ app.get('/minyan', async (req, res) => {
       });
     }
 
-    // מיון לפי שעה
     minyanim.sort((a, b) => a.minutes - b.minutes);
 
     if (minyanim.length === 0) {
-        return res.send("id_list_message=t-לא נמצאו מניינים בקובץ הנתונים");
+      return res.send("id_list_message=t-לא נמצאו מניינים בקובץ");
     }
 
-    // חישוב זמן נוכחי ליציאה ראשונית
     const now = new Date();
     const israelTime = new Date(now.toLocaleString("en-US", {timeZone: "Asia/Jerusalem"}));
     const curMin = israelTime.getHours() * 60 + israelTime.getMinutes();
 
-    // לוגיקה: אם זו פעם ראשונה או לחיצה על "הבא"/"קודם"
+    // לוגיקה של התפריט
     if (currentIndex === null) {
-      // מוצאים את המניין הקרוב ביותר לשעה הנוכחית
+      // כניסה ראשונה - מציאת המניין הקרוב
       currentIndex = minyanim.findIndex(m => m.minutes >= curMin);
-      if (currentIndex === -1) currentIndex = 0; 
+      if (currentIndex === -1) currentIndex = 0;
     } else {
-      // תגובה למקשים
+      // אם המשתמש הקיש ספרה
       if (digit === '1') { // הבא
         if (currentIndex < minyanim.length - 1) currentIndex++;
       } else if (digit === '2') { // קודם
@@ -81,16 +78,20 @@ app.get('/minyan', async (req, res) => {
     const detail = `תפילת ${m.type || ''} ב${m.shul || ''} ${m.location !== '-' ? m.location : ''} בשעה ${m.time}. `;
     const menu = "לשמיעה חוזרת הקש 0, למניין הבא 1, לקודם 2, לכל המניינים 3, ליציאה 4.";
 
-    res.set('Content-Type', 'text/plain; charset=utf-8');
+    // הפורמט החדש: read
+    // t-TEXT = השמעת טקסט
+    // digit = שם המשתנה שיחזור לשרת
+    // no = לא להשמיע צפצוף בסיום
+    // 1,1,7 = מקסימום ספרה 1, מינימום 1, זמן המתנה 7 שניות
+    const responseString = `read=t-${detail}${menu}=digit,no,1,1,7,Digits&api_set_var=index=${currentIndex}`;
     
-    // שליחת התגובה לימות המשיח:
-    // 1. משמיע את המניין + תפריט
-    // 2. מבקש ספרה אחת (read_type=digits)
-    // 3. שומר את ה-index הנוכחי כמשתנה במערכת (api_set_var)
-    res.send(`id_list_message=t-${detail}${menu}&read_type=digits&max=1&var_name=digit&api_set_var=index=${currentIndex}`);
+    console.log("Sending response:", responseString);
+    
+    res.set('Content-Type', 'text/plain; charset=utf-8');
+    res.send(responseString);
 
   } catch (error) {
-    console.error(error);
+    console.error("Error:", error.message);
     res.send('id_list_message=t-חלה שגיאה במערכת');
   }
 });
