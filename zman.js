@@ -5,47 +5,27 @@ const axios = require('axios');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// ==================================================================
-// שים לב! עדכן כאן את הקישור החדש שלך אחרי ששינית לשם באנגלית (data.csv)
-// הורדתי את ה-refs/heads מהקישור כי זה שובר אותו
-// ==================================================================
-const CSV_URL = 'https://raw.githubusercontent.com/shgo9573/minyanim/main/data.csv'; 
+// *** חשוב: שנה בגיטהאב את שם הקובץ ל-data.csv ***
+const CSV_URL = 'https://raw.githubusercontent.com/shgo9573/minyanim/refs/heads/main/_%D7%96%D7%9E%D7%A0%D7%99%20%D7%94%D7%AA%D7%A4%D7%99%D7%9C%D7%95%D7%AA%20-%20%D7%92%D7%99%D7%9C%D7%99%D7%95%D7%9F1.csv'; 
 
 app.get('/minyan', async (req, res) => {
-  // הגדרת כותרות מיד בהתחלה כדי למנוע ניתוקים
   res.set('Content-Type', 'text/plain; charset=utf-8');
 
   try {
-    console.log("Attempting to fetch CSV from:", CSV_URL);
-    
-    // משיכת הנתונים עם הגדרות מיוחדות לגיטהאב
-    const response = await axios.get(CSV_URL, {
-        responseType: 'text',
-        headers: { 'User-Agent': 'Node.js App' } // גיטהאב לפעמים חוסם בלי זה
-    });
-
+    // 1. משיכת הנתונים
+    const response = await axios.get(CSV_URL);
     const csvData = response.data;
-    
-    // בדיקה שהקובץ לא ריק
-    if (!csvData || csvData.length < 10) {
-        console.error("CSV is empty or too short");
-        return res.send("id_list_message=t-הקובץ שהתקבל מגיטהאב ריק או לא תקין");
-    }
-
     const rows = csvData.split(/\r?\n/);
     let minyanim = [];
 
-    // עיבוד הנתונים
     for (let i = 1; i < rows.length; i++) {
       let row = rows[i].trim();
       if (!row) continue;
-      // פיצול לפי פסיק
       const columns = row.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
       if (columns.length < 4) continue;
 
       const clean = (str) => str ? str.replace(/"/g, '').trim() : '';
-      const timeStr = clean(columns[3]); // עמודה D - שעה
-      
+      const timeStr = clean(columns[3]);
       if (!timeStr || !timeStr.includes(':')) continue;
 
       const parts = timeStr.split(':');
@@ -60,70 +40,56 @@ app.get('/minyan', async (req, res) => {
       });
     }
 
-    // מיון
     minyanim.sort((a, b) => a.minutes - b.minutes);
 
-    if (minyanim.length === 0) {
-        return res.send("id_list_message=t-לא נמצאו מניינים תקינים בקובץ, נא לבדוק את המבנה");
-    }
+    if (minyanim.length === 0) return res.send("id_list_message=t-לא נמצאו מניינים בקובץ");
 
-    // === לוגיקת התפריט ===
-    
-    // בדיקת מיקום נוכחי
-    let currentIndex;
-    if (req.query.minyan_index) {
-        currentIndex = parseInt(req.query.minyan_index);
-    } else {
-        // מציאת מניין קרוב
-        const now = new Date();
-        const israelTime = new Date(now.toLocaleString("en-US", {timeZone: "Asia/Jerusalem"}));
-        const curMin = israelTime.getHours() * 60 + israelTime.getMinutes();
-        currentIndex = minyanim.findIndex(m => m.minutes >= curMin);
-        if (currentIndex === -1) currentIndex = 0;
-    }
-
-    // בדיקת לחיצת מקשים
+    // 2. לוגיקת המיקום (Index)
+    let currentIndex = req.query.minyan_index !== undefined ? parseInt(req.query.minyan_index) : null;
     const action = req.query.menu_choice;
-    
-    if (action === '1') { // הבא
+    let prefixMessage = "";
+
+    const now = new Date();
+    const israelTime = new Date(now.toLocaleString("en-US", {timeZone: "Asia/Jerusalem"}));
+    const curMin = israelTime.getHours() * 60 + israelTime.getMinutes();
+
+    // כניסה ראשונה
+    if (currentIndex === null) {
+      currentIndex = minyanim.findIndex(m => m.minutes >= curMin);
+      if (currentIndex === -1) {
+        currentIndex = 0;
+        prefixMessage = "לא נמצאו מניינים נוספים להיום. מנייני מחר: ";
+      }
+    } else {
+      // תגובה למקשים
+      if (action === '1') { // הבא
         if (currentIndex < minyanim.length - 1) currentIndex++;
-    } else if (action === '2') { // קודם
+        else prefixMessage = "זהו המניין האחרון ברשימה. ";
+      } else if (action === '2') { // קודם
         if (currentIndex > 0) currentIndex--;
-    } else if (action === '3') { // הכל
-        let allText = minyanim.map(m => `תפילת ${m.type} ב${m.shul} בשעה ${m.time}`).join('. ');
-        // שימוש ב-read כדי להחזיר את המשתמש לאותו מקום אחרי השמיעה
-        return res.send(`read=t-רשימת כל המניינים: ${allText}. לחזרה לתפריט הקש סולמית=menu_choice,number,1,1,1,Digits&minyan_index=${currentIndex}`);
-    } else if (action === '4') { // יציאה
+        else prefixMessage = "זהו המניין הראשון ברשימה. ";
+      } else if (action === '3') { // הכל
+        let allText = minyanim.map(m => `תפילת ${m.type} בשעה ${m.time}`).join('. ');
+        return res.send(`id_list_message=t-רשימת כל המניינים: ${allText}&go_to_folder=./`);
+      } else if (action === '4') { // יציאה
         return res.send(`id_list_message=t-להתראות&hangup=yes`);
+      }
     }
 
-    // הכנת הטקסט להשמעה
     const m = minyanim[currentIndex];
-    const details = `תפילת ${m.type || ''} ב${m.shul || ''} בשעה ${m.time}. `;
-    
-    let menuText = "לשמיעה חוזרת הקש 0. ";
-    if (currentIndex < minyanim.length - 1) menuText += "למניין הבא 1. ";
-    if (currentIndex > 0) menuText += "למניין הקודם 2. ";
-    menuText += "לכל המניינים 3. ליציאה 4.";
+    const details = `${prefixMessage}תפילת ${m.type || ''} ב${m.shul || ''} בשעה ${m.time}. `;
+    const menu = "לשמיעה חוזרת הקש 0. למניין הבא 1. לקודם 2. לכל המניינים 3. ליציאה 4.";
 
-    // שליחת התשובה
-    const responseString = `read=t-${details} ${menuText}=menu_choice,number,1,1,7,Digits&minyan_index=${currentIndex}`;
+    // 3. בניית התשובה לפעם הבאה - פורמט תקני ומפריד
+    // אנו שולחים קודם את הגדרת המשתנה ואז את פקודת הקריאה
+    const responseString = `api_set_var=minyan_index=${currentIndex}&read=t-${details}${menu}=menu_choice,number,1,1,7,no,no,no`;
     
-    console.log("Sending response:", responseString);
+    console.log("Response:", responseString);
     res.send(responseString);
 
   } catch (error) {
-    console.error("Critical Error:", error.message);
-    
-    // זה החלק החשוב - מקריא את השגיאה בטלפון במקום לנתק
-    let errorMsg = "חלה שגיאה במערכת. ";
-    if (error.response && error.response.status === 404) {
-        errorMsg += "הקובץ לא נמצא בגיטהאב. בדוק את הקישור.";
-    } else {
-        errorMsg += "שגיאה כללית בשרת.";
-    }
-    
-    res.send(`id_list_message=t-${errorMsg}`);
+    console.error(error);
+    res.send('id_list_message=t-חלה שגיאה בשרת. וודא ששם הקובץ בגיטהאב הוא data.csv');
   }
 });
 
