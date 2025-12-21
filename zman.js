@@ -5,21 +5,21 @@ const axios = require('axios');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// *** וודא ששם הקובץ בגיטהאב הוא data.csv (באותיות קטנות) ***
+// הקישור המעודכן ששלחת
 const CSV_URL = 'https://raw.githubusercontent.com/shgo9573/minyanim/refs/heads/main/zmanim.csv'; 
 
-// פונקציה לניקוי טקסט
 function cleanForTTS(str) {
     if (!str) return '';
     return str.replace(/[.,\-"\']/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 app.get('/minyan', async (req, res) => {
-  // קביעת כותרת התשובה כטקסט נקי
   res.set('Content-Type', 'text/plain; charset=utf-8');
 
   try {
-    console.log("Fetching CSV...");
+    // לוג לבדיקת הנתונים שמגיעים מהטלפון
+    console.log(`Incoming: menu_choice=${req.query.menu_choice}, minyan_index=${req.query.minyan_index}`);
+
     const response = await axios.get(CSV_URL);
     const csvData = response.data;
     const rows = csvData.split(/\r?\n/);
@@ -48,12 +48,8 @@ app.get('/minyan', async (req, res) => {
 
     minyanim.sort((a, b) => a.minutes - b.minutes);
 
-    if (minyanim.length === 0) {
-        return res.send("id_list_message=t-לא נמצאו מניינים בקובץ הנתונים");
-    }
-
-    // לוגיקה של המיקום
-    let currentIndex = req.query.minyan_index !== undefined ? parseInt(req.query.minyan_index) : null;
+    // לוגיקת המיקום
+    let currentIndex = (req.query.minyan_index !== undefined) ? parseInt(req.query.minyan_index) : null;
     const action = req.query.menu_choice;
     let prefixMessage = "";
 
@@ -68,10 +64,11 @@ app.get('/minyan', async (req, res) => {
         prefixMessage = "לא נמצאו מניינים נוספים להיום מנייני מחר ";
       }
     } else {
-      if (action === '1') {
+      // כאן התיקון - אם המשתמש לחץ, ה-currentIndex כבר קיים והוא ישתנה
+      if (action === '1') { // הבא
         if (currentIndex < minyanim.length - 1) currentIndex++;
         else prefixMessage = "זהו המניין האחרון ";
-      } else if (action === '2') {
+      } else if (action === '2') { // קודם
         if (currentIndex > 0) currentIndex--;
         else prefixMessage = "זהו המניין הראשון ";
       } else if (action === '3') {
@@ -83,22 +80,21 @@ app.get('/minyan', async (req, res) => {
     }
 
     const m = minyanim[currentIndex];
-    const details = `${prefixMessage} תפילת ${m.type} ב${m.shul} בשעה ${m.time} `;
+    const details = `${prefixMessage} תפילת ${m.type || ''} ב${m.shul || ''} בשעה ${m.time} `;
     const menu = "לשמיעה חוזרת הקש אפס למניין הבא אחת לקודם שתיים לכל המניינים שלוש ליציאה ארבע";
     const finalTTS = cleanForTTS(details + menu);
 
     // =================================================================
-    // הפורמט המנצח: פקודת read אחת, והמשתנה minyan_index מוצמד בסוף
+    // הפתרון לניתוק: שליחת פקודות בשורות נפרדות
     // =================================================================
-    const responseString = `read=t-${finalTTS}=menu_choice,number,1,1,7,no,no,no&minyan_index=${currentIndex}`;
+    const responseString = `api_set_var=minyan_index=${currentIndex}\nread=t-${finalTTS}=menu_choice,number,1,1,7,no,no,no`;
     
-    console.log("Sending response:", responseString);
+    console.log("Response sent:", responseString);
     res.send(responseString);
 
   } catch (error) {
     console.error("Error:", error.message);
-    // אם יש שגיאה, המערכת תודיע עליה במקום לשתוק
-    res.send(`id_list_message=t-חלה שגיאה במערכת וודא שקיים קובץ בשם דאטה נקודה סי אס וי בגיטהאב`);
+    res.send(`id_list_message=t-חלה שגיאה במערכת`);
   }
 });
 
