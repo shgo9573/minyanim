@@ -7,24 +7,21 @@ const port = process.env.PORT || 3000;
 
 const CSV_URL = 'https://raw.githubusercontent.com/shgo9573/minyanim/refs/heads/main/zmanim.csv'; 
 
+// ניקוי טקסט קפדני - מסיר הכל כולל סימנים שעלולים לשבור את ה-API
 function cleanForTTS(str) {
     if (!str) return '';
-    return str.replace(/[.,\-"\']/g, ' ').replace(/\s+/g, ' ').trim();
+    return str.replace(/[.,\-"\'&%=]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 app.get('/minyan', async (req, res) => {
-  res.set('Content-Type', 'text/plain; charset=utf-8');
+  // הגדרת ה-Header לטקסט פשוט בעברית
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
 
-  // ==========================================
-  // לוגים לבדיקת הנתונים הנכנסים
-  // ==========================================
-  console.log("--- פנייה חדשה מהטלפון ---");
-  console.log("כל הפרמטרים שהתקבלו:", JSON.stringify(req.query, null, 2));
+  console.log("--- פנייה חדשה ---");
+  console.log("נתונים שהתקבלו:", req.query);
   
   const menuChoice = req.query.menu_choice;
   const minyanIndex = req.query.minyan_index;
-
-  console.log(`ניתוח: מקש שנלחץ = ${menuChoice}, מיקום נוכחי = ${minyanIndex}`);
 
   try {
     const response = await axios.get(CSV_URL);
@@ -52,7 +49,7 @@ app.get('/minyan', async (req, res) => {
 
     minyanim.sort((a, b) => a.minutes - b.minutes);
 
-    // לוגיקה
+    // לוגיקת המיקום
     let index = (minyanIndex !== undefined && minyanIndex !== "") ? parseInt(minyanIndex) : null;
     let prefix = "";
 
@@ -61,7 +58,6 @@ app.get('/minyan', async (req, res) => {
     const curMin = israelTime.getHours() * 60 + israelTime.getMinutes();
 
     if (index === null || isNaN(index)) {
-      console.log("כניסה ראשונה - מחפש מניין קרוב...");
       index = minyanim.findIndex(m => m.minutes >= curMin);
       if (index === -1) { index = 0; prefix = "לא נמצאו מניינים נוספים להיום מנייני מחר "; }
     } else {
@@ -72,7 +68,7 @@ app.get('/minyan', async (req, res) => {
         if (index > 0) index--;
         else prefix = "זהו המניין הראשון ";
       } else if (menuChoice === '3') {
-        let all = minyanim.map(m => `${m.type} ב${m.shul} בשעה ${m.time}`).join(' ');
+        let all = minyanim.map(m => `${m.type} בשעה ${m.time}`).join(' ');
         return res.send(`id_list_message=t-${cleanForTTS("כל המניינים הם " + all)}&go_to_folder=./`);
       } else if (menuChoice === '4') {
         return res.send(`id_list_message=t-להתראות&hangup=yes`);
@@ -80,20 +76,20 @@ app.get('/minyan', async (req, res) => {
     }
 
     const m = minyanim[index];
-    console.log(`נבחר מניין להשמעה: אינדקס ${index}, זמן ${m.time}`);
+    const details = cleanForTTS(`${prefix} תפילת ${m.type} ב${m.shul} בשעה ${m.time}`);
+    const menu = cleanForTTS("לשמיעה חוזרת הקש אפס למניין הבא אחת לקודם שתיים לכל המניינים שלוש ליציאה ארבע");
 
-    const details = `${prefix} תפילת ${m.type} ב${m.shul} בשעה ${m.time} `;
-    const menu = "לשמיעה חוזרת הקש אפס למניין הבא אחת לקודם שתיים לכל המניינים שלוש ליציאה ארבע";
-    const finalTTS = cleanForTTS(details + menu);
+    // =================================================================
+    // התשובה ה"נורמלית" לימות המשיח: כל פקודה בשורה נפרדת (\n)
+    // =================================================================
+    let responseString = `api_set_var=minyan_index=${index}\n`; // שומר את המיקום
+    responseString += `read=t-${details} ${menu}=menu_choice,number,1,1,7,no,no,no`; // משמיע ומחכה להקשה
 
-    // שליחת התגובה
-    const responseString = `api_set_var=minyan_index=${index}&read=t-${finalTTS}=menu_choice,number,1,1,7,no,no,no`;
-    
-    console.log("תגובה נשלחת לטלפון:", responseString);
+    console.log("תגובה נשלחת:\n" + responseString);
     res.send(responseString);
 
   } catch (error) {
-    console.error("שגיאה בשרת:", error.message);
+    console.error("שגיאה:", error.message);
     res.send(`id_list_message=t-חלה שגיאה בשרת`);
   }
 });
