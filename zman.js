@@ -5,24 +5,47 @@ const axios = require('axios');
 const app = express();
 const port = process.env.PORT || 3000;
 
-const CSV_URL = 'https://raw.githubusercontent.com/shgo9573/minyanim/refs/heads/main/_%D7%96%D7%9E%D7%A0%D7%99%20%D7%94%D7%AA%D7%A4%D7%99%D7%9C%D7%95%D7%AA%20-%20%D7%92%D7%99%D7%9C%D7%99%D7%95%D7%9F1.csv'; 
+// ==================================================================
+// שים לב! עדכן כאן את הקישור החדש שלך אחרי ששינית לשם באנגלית (data.csv)
+// הורדתי את ה-refs/heads מהקישור כי זה שובר אותו
+// ==================================================================
+const CSV_URL = 'https://raw.githubusercontent.com/shgo9573/minyanim/main/data.csv'; 
 
 app.get('/minyan', async (req, res) => {
+  // הגדרת כותרות מיד בהתחלה כדי למנוע ניתוקים
+  res.set('Content-Type', 'text/plain; charset=utf-8');
+
   try {
-    // שלב 1: משיכת הנתונים ועיבוד (כמו קודם)
-    const response = await axios.get(CSV_URL);
+    console.log("Attempting to fetch CSV from:", CSV_URL);
+    
+    // משיכת הנתונים עם הגדרות מיוחדות לגיטהאב
+    const response = await axios.get(CSV_URL, {
+        responseType: 'text',
+        headers: { 'User-Agent': 'Node.js App' } // גיטהאב לפעמים חוסם בלי זה
+    });
+
     const csvData = response.data;
+    
+    // בדיקה שהקובץ לא ריק
+    if (!csvData || csvData.length < 10) {
+        console.error("CSV is empty or too short");
+        return res.send("id_list_message=t-הקובץ שהתקבל מגיטהאב ריק או לא תקין");
+    }
+
     const rows = csvData.split(/\r?\n/);
     let minyanim = [];
 
+    // עיבוד הנתונים
     for (let i = 1; i < rows.length; i++) {
       let row = rows[i].trim();
       if (!row) continue;
+      // פיצול לפי פסיק
       const columns = row.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
       if (columns.length < 4) continue;
 
       const clean = (str) => str ? str.replace(/"/g, '').trim() : '';
-      const timeStr = clean(columns[3]);
+      const timeStr = clean(columns[3]); // עמודה D - שעה
+      
       if (!timeStr || !timeStr.includes(':')) continue;
 
       const parts = timeStr.split(':');
@@ -36,23 +59,22 @@ app.get('/minyan', async (req, res) => {
         minutes: totalMinutes
       });
     }
-    // מיון לפי זמן
+
+    // מיון
     minyanim.sort((a, b) => a.minutes - b.minutes);
 
-    if (minyanim.length === 0) return res.send("id_list_message=t-לא נמצאו מניינים");
+    if (minyanim.length === 0) {
+        return res.send("id_list_message=t-לא נמצאו מניינים תקינים בקובץ, נא לבדוק את המבנה");
+    }
 
-    // =================================================================
-    // שלב 2: לוגיקת "המפל" (Waterfall Logic)
-    // =================================================================
-
-    // בדיקה: האם יש לנו כבר אינדקס? (האם זו פנייה חוזרת?)
-    let currentIndex;
+    // === לוגיקת התפריט ===
     
+    // בדיקת מיקום נוכחי
+    let currentIndex;
     if (req.query.minyan_index) {
-        // אם יש אינדקס ב-URL, נשתמש בו
         currentIndex = parseInt(req.query.minyan_index);
     } else {
-        // אם אין (כניסה ראשונה), נחשב אותו לפי השעה
+        // מציאת מניין קרוב
         const now = new Date();
         const israelTime = new Date(now.toLocaleString("en-US", {timeZone: "Asia/Jerusalem"}));
         const curMin = israelTime.getHours() * 60 + israelTime.getMinutes();
@@ -60,50 +82,48 @@ app.get('/minyan', async (req, res) => {
         if (currentIndex === -1) currentIndex = 0;
     }
 
-    // בדיקה: האם המשתמש ביצע פעולה? (menu_choice)
+    // בדיקת לחיצת מקשים
     const action = req.query.menu_choice;
-
-    if (action === '1') { // מניין הבא
-        if (currentIndex < minyanim.length - 1) {
-            currentIndex++;
-        }
-    } else if (action === '2') { // מניין קודם
-        if (currentIndex > 0) {
-            currentIndex--;
-        }
-    } else if (action === '3') { // השמעת כל המניינים
-        let allText = minyanim.map(m => `תפילת ${m.type} בשעה ${m.time}`).join('. ');
-        // כאן אנחנו משמיעים הכל, ואז מחזירים את המשתמש לאותו מקום (אותו index)
-        return res.send(`read=t-רשימת כל המניינים: ${allText}. לחזרה למניין הנוכחי הקש משהו=menu_choice,number,1,1,1&minyan_index=${currentIndex}`);
+    
+    if (action === '1') { // הבא
+        if (currentIndex < minyanim.length - 1) currentIndex++;
+    } else if (action === '2') { // קודם
+        if (currentIndex > 0) currentIndex--;
+    } else if (action === '3') { // הכל
+        let allText = minyanim.map(m => `תפילת ${m.type} ב${m.shul} בשעה ${m.time}`).join('. ');
+        // שימוש ב-read כדי להחזיר את המשתמש לאותו מקום אחרי השמיעה
+        return res.send(`read=t-רשימת כל המניינים: ${allText}. לחזרה לתפריט הקש סולמית=menu_choice,number,1,1,1,Digits&minyan_index=${currentIndex}`);
     } else if (action === '4') { // יציאה
         return res.send(`id_list_message=t-להתראות&hangup=yes`);
     }
 
-    // =================================================================
-    // שלב 3: בניית התשובה לפעם הבאה
-    // =================================================================
-
+    // הכנת הטקסט להשמעה
     const m = minyanim[currentIndex];
     const details = `תפילת ${m.type || ''} ב${m.shul || ''} בשעה ${m.time}. `;
     
-    // הנחיה קולית דינמית (כדי לא להגיד "למניין הבא" אם אנחנו בסוף)
     let menuText = "לשמיעה חוזרת הקש 0. ";
     if (currentIndex < minyanim.length - 1) menuText += "למניין הבא 1. ";
     if (currentIndex > 0) menuText += "למניין הקודם 2. ";
     menuText += "לכל המניינים 3. ליציאה 4.";
 
-    // הסוד הגדול: אנחנו שולחים את הפקודה read, ומצמידים לה את ה-minyan_index המעודכן!
-    // בפעם הבאה שהמשתמש יקיש משהו, ימות המשיח ישלח לנו חזרה: menu_choice=X וגם minyan_index=Y
+    // שליחת התשובה
+    const responseString = `read=t-${details} ${menuText}=menu_choice,number,1,1,7,Digits&minyan_index=${currentIndex}`;
     
-    res.set('Content-Type', 'text/plain; charset=utf-8');
-    
-    // שימוש בתחביר המדויק מהקוד ששלחת:
-    // read=t-TEXT=VAR_NAME,TYPE,MAX,MIN... & STATE_VAR=VALUE
-    res.send(`read=t-${details} ${menuText}=menu_choice,number,1,1,7,Digits&minyan_index=${currentIndex}`);
+    console.log("Sending response:", responseString);
+    res.send(responseString);
 
   } catch (error) {
-    console.error(error);
-    res.send('id_list_message=t-שגיאה במערכת');
+    console.error("Critical Error:", error.message);
+    
+    // זה החלק החשוב - מקריא את השגיאה בטלפון במקום לנתק
+    let errorMsg = "חלה שגיאה במערכת. ";
+    if (error.response && error.response.status === 404) {
+        errorMsg += "הקובץ לא נמצא בגיטהאב. בדוק את הקישור.";
+    } else {
+        errorMsg += "שגיאה כללית בשרת.";
+    }
+    
+    res.send(`id_list_message=t-${errorMsg}`);
   }
 });
 
