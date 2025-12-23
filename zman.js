@@ -12,16 +12,24 @@ function cleanForTTS(str) {
     return str.replace(/[.,\-"\'&%=]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+// =================================================================
+// 1. הוספתי כאן "מרגל" (Logger) שתופס כל פנייה לשרת
+// =================================================================
+app.use((req, res, next) => {
+    console.log(`>>> נכנסה פנייה חדשה לכתובת: ${req.path}`);
+    console.log("פרמטרים שהתקבלו:", JSON.stringify(req.query, null, 2));
+    next(); // ממשיך הלאה לקוד הרגיל
+});
+
+// נתיב ראשי - כדי שאם ימות המשיח פונים בטעות לכתובת הראשית, הם יקבלו תשובה
+app.get('/', (req, res) => {
+    res.send('id_list_message=t-השרת פעיל אך הכתובת בשלוחה חסרה את הסיומת מינין');
+});
+
 app.get('/minyan', async (req, res) => {
-    // הגדרה קריטית לעברית
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
 
-    // ==========================================
-    // לוגים - עכשיו אתה תראה אותם!
-    // ==========================================
-    console.log(">>> כניסה ל-zman.js <<<");
-    console.log("פרמטרים:", JSON.stringify(req.query, null, 2));
-
+    // אנחנו כבר רואים את הלוגים למעלה, אז כאן נשאיר רק את הלוגיקה
     const menuChoice = req.query.menu_choice; 
     let minyanIndex = req.query.minyan_index;
 
@@ -54,7 +62,6 @@ app.get('/minyan', async (req, res) => {
         let index;
         let prefix = "";
 
-        // בדיקה אם זו כניסה ראשונה
         if (!minyanIndex || minyanIndex === 'undefined') {
             console.log("--- חישוב ראשוני ---");
             const now = new Date();
@@ -67,20 +74,19 @@ app.get('/minyan', async (req, res) => {
                 prefix = "לא נמצאו מניינים נוספים להיום מנייני מחר "; 
             }
         } else {
-            // כניסה חוזרת
             index = parseInt(minyanIndex);
             console.log(`--- ממשיך מאינדקס ${index} ---`);
 
-            if (menuChoice === '1') { // הבא
+            if (menuChoice === '1') { 
                 if (index < minyanim.length - 1) index++;
                 else prefix = "זהו המניין האחרון ";
-            } else if (menuChoice === '2') { // קודם
+            } else if (menuChoice === '2') { 
                 if (index > 0) index--;
                 else prefix = "זהו המניין הראשון ";
-            } else if (menuChoice === '3') { // הכל
+            } else if (menuChoice === '3') { 
                 let all = minyanim.map(m => `${m.type} ב${m.shul} בשעה ${m.time}`).join(' ');
                 return res.send(`id_list_message=t-${cleanForTTS("כל המניינים הם " + all)}&go_to_folder=./`);
-            } else if (menuChoice === '4') { // יציאה
+            } else if (menuChoice === '4') { 
                 return res.send(`id_list_message=t-להתראות&hangup=yes`);
             }
         }
@@ -89,7 +95,6 @@ app.get('/minyan', async (req, res) => {
         const details = cleanForTTS(`${prefix} תפילת ${m.type} ב${m.shul} בשעה ${m.time}`);
         const menu = cleanForTTS("לשמיעה חוזרת הקש אפס למניין הבא אחת לקודם שתיים לכל המניינים שלוש ליציאה ארבע");
 
-        // שיטת השרשור שעובדת (Variable Chaining)
         const responseString = `read=t-${details} ${menu}=menu_choice,number,1,1,7,no,no,no&minyan_index=${index}`;
         
         console.log("שולח לימות המשיח:", responseString);
