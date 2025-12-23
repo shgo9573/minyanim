@@ -1,32 +1,26 @@
+require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
+
 const app = express();
 const port = process.env.PORT || 3000;
 
-// הקישור ל-CSV שלך
 const CSV_URL = 'https://raw.githubusercontent.com/shgo9573/minyanim/refs/heads/main/zmanim.csv'; 
 
-// פונקציית ניקוי טקסט
 function cleanForTTS(str) {
     if (!str) return '';
     return str.replace(/[.,\-"\'&%=]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-// נתיב ראשי - כדי שנוכל לראות אם השרת בכלל חי
-app.get('/', (req, res) => {
-    console.log("Ping received on root /");
-    res.send('Server is active. Please use /minyan');
-});
-
-// הנתיב של המערכת
 app.get('/minyan', async (req, res) => {
+    // הגדרה קריטית לעברית
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
 
     // ==========================================
-    // לוגים: חובה לראות את זה בלוגים של Render
+    // לוגים - עכשיו אתה תראה אותם!
     // ==========================================
-    console.log(">>> כניסה חדשה למערכת (/minyan) <<<");
-    console.log("הפרמטרים שהתקבלו מימות המשיח:", JSON.stringify(req.query, null, 2));
+    console.log(">>> כניסה ל-zman.js <<<");
+    console.log("פרמטרים:", JSON.stringify(req.query, null, 2));
 
     const menuChoice = req.query.menu_choice; 
     let minyanIndex = req.query.minyan_index;
@@ -60,9 +54,9 @@ app.get('/minyan', async (req, res) => {
         let index;
         let prefix = "";
 
-        // בדיקה אם זו כניסה ראשונה (אין minyan_index)
+        // בדיקה אם זו כניסה ראשונה
         if (!minyanIndex || minyanIndex === 'undefined') {
-            console.log("--- חישוב מניין ראשון לפי שעה ---");
+            console.log("--- חישוב ראשוני ---");
             const now = new Date();
             const israelTime = new Date(now.toLocaleString("en-US", {timeZone: "Asia/Jerusalem"}));
             const curMin = israelTime.getHours() * 60 + israelTime.getMinutes();
@@ -73,9 +67,9 @@ app.get('/minyan', async (req, res) => {
                 prefix = "לא נמצאו מניינים נוספים להיום מנייני מחר "; 
             }
         } else {
-            // כניסה חוזרת (יש minyan_index)
+            // כניסה חוזרת
             index = parseInt(minyanIndex);
-            console.log(`--- המשך ממניין מספר: ${index} ---`);
+            console.log(`--- ממשיך מאינדקס ${index} ---`);
 
             if (menuChoice === '1') { // הבא
                 if (index < minyanim.length - 1) index++;
@@ -95,10 +89,10 @@ app.get('/minyan', async (req, res) => {
         const details = cleanForTTS(`${prefix} תפילת ${m.type} ב${m.shul} בשעה ${m.time}`);
         const menu = cleanForTTS("לשמיעה חוזרת הקש אפס למניין הבא אחת לקודם שתיים לכל המניינים שלוש ליציאה ארבע");
 
-        // השיטה שעובדת: שרשור המשתנה בסוף הלינק
+        // שיטת השרשור שעובדת (Variable Chaining)
         const responseString = `read=t-${details} ${menu}=menu_choice,number,1,1,7,no,no,no&minyan_index=${index}`;
         
-        console.log("תגובה נשלחת:", responseString);
+        console.log("שולח לימות המשיח:", responseString);
         res.send(responseString);
 
     } catch (error) {
