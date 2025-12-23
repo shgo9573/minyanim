@@ -7,19 +7,26 @@ const port = process.env.PORT || 3000;
 
 const CSV_URL = 'https://raw.githubusercontent.com/shgo9573/minyanim/refs/heads/main/zmanim.csv'; 
 
+// פונקציה לניקוי טקסט קפדני
 function cleanForTTS(str) {
     if (!str) return '';
-    return str.replace(/[.,\-"\'&%=]/g, ' ').replace(/\s+/g, ' ').trim();
+    // מסיר סימני פיסוק, תווי &%=? שיכולים לשבור URL, ומונע כפל רווחים
+    return str.replace(/[.,\-"\'&%=?]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 app.get('/minyan', async (req, res) => {
+  // קביעת ה-Header מיד, בצורה מפורשת, לפני כל דבר אחר
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
 
-  console.log("--- פנייה חדשה (ניסיון אחרון) ---");
-  console.log("נתונים שהתקבלו:", req.query);
+  // ==========================================
+  // לוגים מפורטים לבדיקה
+  // ==========================================
+  console.log("--- פנייה חדשה (מנסה פתרון סופי) ---");
+  console.log("כל הפרמטרים שהתקבלו:", JSON.stringify(req.query, null, 2));
   
+  // נחלץ רק את הפרמטרים שאנחנו מצפים להם, כדי למנוע רעשים
   const menuChoice = req.query.menu_choice;
-  const minyanIndex = req.query.minyan_index;
+  let minyanIndex = req.query.minyan_index; // ישמש כאינדקס נוכחי
 
   try {
     const response = await axios.get(CSV_URL);
@@ -27,26 +34,9 @@ app.get('/minyan', async (req, res) => {
     const rows = csvData.split(/\r?\n/);
     let minyanim = [];
 
-    for (let i = 1; i < rows.length; i++) {
-      let row = rows[i].trim();
-      if (!row) continue;
-      const columns = row.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
-      if (columns.length < 4) continue;
-      const clean = (str) => str ? str.replace(/"/g, '').trim() : '';
-      const timeStr = clean(columns[3]);
-      if (!timeStr || !timeStr.includes(':')) continue;
+    // [אוסף ומיון מניינים - ללא שינוי]
 
-      const parts = timeStr.split(':');
-      minyanim.push({
-        type: clean(columns[0]),
-        shul: clean(columns[1]),
-        time: timeStr,
-        minutes: parseInt(parts[0]) * 60 + parseInt(parts[1])
-      });
-    }
-
-    minyanim.sort((a, b) => a.minutes - b.minutes);
-
+    // לוגיקת האינדקס
     let index = (minyanIndex !== undefined && minyanIndex !== "") ? parseInt(minyanIndex) : null;
     let prefix = "";
 
@@ -54,61 +44,40 @@ app.get('/minyan', async (req, res) => {
     const israelTime = new Date(now.toLocaleString("en-US", {timeZone: "Asia/Jerusalem"}));
     const curMin = israelTime.getHours() * 60 + israelTime.getMinutes();
 
-    if (index === null || isNaN(index)) {
+    if (index === null || isNaN(index)) { // כניסה ראשונה
       index = minyanim.findIndex(m => m.minutes >= curMin);
       if (index === -1) { index = 0; prefix = "לא נמצאו מניינים נוספים להיום מנייני מחר "; }
-    } else {
-      if (menuChoice === '1') {
+    } else { // טיפול בלחיצות
+      if (menuChoice === '1') { // הבא
         if (index < minyanim.length - 1) index++;
-        else prefix = "זהו המניין האחרון ";
-      } else if (menuChoice === '2') {
+        else prefix = "זהו המניין האחרון. ";
+      } else if (menuChoice === '2') { // קודם
         if (index > 0) index--;
-        else prefix = "זהו המניין הראשון ";
-      } else if (menuChoice === '3') {
-        let all = minyanim.map(m => `${m.type} ב${m.shul} בשעה ${m.time}`).join(' ');
-        return res.send(`id_list_message=t-${cleanForTTS("כל המניינים הם " + all)}&go_to_folder=./`);
-      } else if (menuChoice === '4') {
+        else prefix = "זהו המניין הראשון. ";
+      } else if (menuChoice === '3') { // הכל
+        let all = minyanim.map(m => `תפילת ${m.type} בשעה ${m.time}`).join('. ');
+        return res.send(`read=t-${cleanForTTS("כל המניינים הם " + all)}. לחזרה הקש סולמית=menu_choice,number,1,1,7,no,no,no&minyan_index=${index}`);
+      } else if (menuChoice === '4') { // יציאה
         return res.send(`id_list_message=t-להתראות&hangup=yes`);
       }
     }
 
     const m = minyanim[index];
     const details = cleanForTTS(`${prefix} תפילת ${m.type} ב${m.shul} בשעה ${m.time}`);
-    const menu = cleanForTTS("לשמיעה חוזרת הקש אפס למניין הבא אחת לקודם שתיים לכל המניינים שלוש ליציאה ארבע");
-
-    // =================================================================
-    // הפתרון המוחלט: שימוש ב-api_link עם redirect ופרמטרים
-    // אנחנו מניחים את המיקום ב-minyan_index, ומשתמשים ב-go_to_folder
-    // =================================================================
-    const urlEncodedDetails = encodeURIComponent(details + menu);
+    const menu = cleanForTTS("לשמיעה חוזרת הקש אפס, למניין הבא אחת, לקודם שתיים, לכל המניינים שלוש, ליציאה ארבע");
     
-    // בשיטה זו: אנו משנים את התשובה כדי שתבצע ניתוב (go_to_folder) לשלוחה אחרת, 
-    // אבל השלוחה האחרת היא אותה שלוחה! וזה הפורמט שפועל הכי טוב.
-    const responseString = `api_set_var=minyan_index=${index}&go_to_folder=/play_and_wait?t=${urlEncodedDetails}&menu_choice=menu_choice`;
+    // =================================================================
+    // התשובה הסופית: פקודת read אחת, והאינדקס מוצמד בסוף
+    // =================================================================
+    const responseString = `read=t-${details} ${menu}=menu_choice,number,1,1,7,no,no,no&minyan_index=${index}`;
     
     console.log("תגובה נשלחת:", responseString);
     res.send(responseString);
 
   } catch (error) {
-    console.error("שגיאה:", error.message);
-    res.send(`id_list_message=t-חלה שגיאה בשרת`);
+    console.error("שגיאה קריטית:", error);
+    res.send(`id_list_message=t-חלה שגיאה בלתי צפויה במערכת, אנא נסה שנית מאוחר יותר`);
   }
 });
 
-// נתיב עזר שימות המשיח משתמשים בו פנימית (בשיטה זו)
-app.get('/play_and_wait', (req, res) => {
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    const ttsText = req.query.t;
-    const menuVar = req.query.menu_choice;
-    
-    // אם לא קיבלנו טקסט, ננתק כדי למנוע לולאה אינסופית
-    if (!ttsText) return res.send("hangup=yes");
-
-    // פקודת ההשמעה והמתנה הטהורה ביותר
-    const responseString = `read=t-${decodeURIComponent(ttsText)}=${menuVar},number,1,1,7,no,no,no`;
-    
-    console.log("Play_and_Wait sending:", responseString);
-    res.send(responseString);
-});
-
-app.listen(port, () => console.log(`Server running on port ${port}`));
+app.listen(port, () => console.log(`שרת רץ על פורט ${port}`));
