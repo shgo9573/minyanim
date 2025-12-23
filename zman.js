@@ -7,15 +7,20 @@ const port = process.env.PORT || 3000;
 
 const CSV_URL = 'https://raw.githubusercontent.com/shgo9573/minyanim/refs/heads/main/zmanim.csv'; 
 
+// פונקציית ניקוי - משאירה רווחים כדי שההקראה תהיה ברורה
 function cleanForTTS(str) {
     if (!str) return '';
+    // מחליף סימנים ברווחים, ומצמצם רווחים כפולים
     return str.replace(/[.,\-"\'&%=]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 app.get('/minyan', async (req, res) => {
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
 
-  // קבלת ההיסטוריה של ההקשות (יכול להגיע כמספר בודד או כמערך)
+  console.log("==================================================");
+  console.log(">>> פנייה חדשה נכנסה (History Mode)");
+  
+  // 1. קבלת ההיסטוריה של ההקשות
   let history = [];
   if (Array.isArray(req.query.menu_choice)) {
       history = req.query.menu_choice;
@@ -23,9 +28,10 @@ app.get('/minyan', async (req, res) => {
       history = [req.query.menu_choice];
   }
 
-  console.log("היסטוריית הקשות:", history);
+  console.log("היסטוריית הקשות שהתקבלה:", JSON.stringify(history));
 
   try {
+    // 2. משיכת הנתונים
     const response = await axios.get(CSV_URL);
     const csvData = response.data;
     const rows = csvData.split(/\r?\n/);
@@ -43,66 +49,77 @@ app.get('/minyan', async (req, res) => {
       const parts = timeStr.split(':');
       minyanim.push({
         type: clean(columns[0]),
-        shul: clean(columns[1]),
+        shul: clean(columns[1]), // כאן נשמר שם בית הכנסת
         time: timeStr,
         minutes: parseInt(parts[0]) * 60 + parseInt(parts[1])
       });
     }
 
+    // מיון לפי שעה
     minyanim.sort((a, b) => a.minutes - b.minutes);
+    console.log(`סך הכל נמצאו ${minyanim.length} מניינים בקובץ.`);
 
-    // 1. חישוב נקודת ההתחלה (לפי שעה)
+    // 3. חישוב נקודת ההתחלה (לפי שעה נוכחית)
     const now = new Date();
     const israelTime = new Date(now.toLocaleString("en-US", {timeZone: "Asia/Jerusalem"}));
     const curMin = israelTime.getHours() * 60 + israelTime.getMinutes();
     
     let currentIndex = minyanim.findIndex(m => m.minutes >= curMin);
-    if (currentIndex === -1) currentIndex = 0; // אם נגמר היום, מתחילים ממחר
+    // אם עבר הזמן של כל המניינים להיום, נתחיל מהראשון (מחר)
+    if (currentIndex === -1) currentIndex = 0; 
+    
+    console.log(`נקודת התחלה (לפי שעה ${israelTime.getHours()}:${israelTime.getMinutes()}): אינדקס ${currentIndex}`);
 
-    // 2. שחזור התנועה לפי היסטוריית ההקשות
-    // אנחנו מריצים מחדש את כל מה שהמשתמש עשה כדי להגיע למיקום הנוכחי
+    // 4. שחזור התנועה ("Replay") לפי היסטוריית ההקשות
     for (let move of history) {
         if (move === '1') { // הבא
             if (currentIndex < minyanim.length - 1) currentIndex++;
         } else if (move === '2') { // קודם
             if (currentIndex > 0) currentIndex--;
         }
-        // מקש '3' (השמעת הכל) לא משנה את המיקום, אז מתעלמים ממנו בחישוב
+        // מקש '3' ומקש '4' לא משנים את המיקום הנוכחי, רק משנים את ההשמעה
     }
 
-    // 3. בדיקה מה היה המקש *האחרון* שנלחץ כדי לדעת מה להשמיע
+    console.log(`מיקום סופי לאחר חישוב היסטוריה: אינדקס ${currentIndex}`);
+
+    // 5. קביעת הטקסט להשמעה
     const lastMove = history.length > 0 ? history[history.length - 1] : null;
 
     if (lastMove === '4') {
+        console.log("זוהתה בקשת יציאה (4)");
         return res.send(`id_list_message=t-להתראות&hangup=yes`);
     }
 
-    // משתנים להודעה
     let textToRead = "";
     
     if (lastMove === '3') {
-        // אם האחרון היה 3 - משמיעים את כל הרשימה
-        let all = minyanim.map(m => `${m.type} בשעה ${m.time}`).join(' ');
+        // === אפשרות 3: השמעת כל הרשימה ===
+        console.log("בקשה להשמעת כל הרשימה (3)");
+        
+        // כאן השינוי שביקשת: הוספנו את m.shul לרשימה
+        let all = minyanim.map(m => `תפילת ${m.type} ב${m.shul} בשעה ${m.time}`).join('. ');
+        
         textToRead = cleanForTTS("רשימת כל המניינים היא " + all);
     } else {
-        // אחרת - משמיעים את המניין הנוכחי שהגענו אליו בחישוב
+        // === ברירת מחדל: השמעת המניין הנוכחי ===
         const m = minyanim[currentIndex];
         
         let prefix = "";
-        if (history.length === 0) prefix = "לא נמצאו מניינים נוספים להיום מנייני מחר "; // הודעה רק בכניסה ראשונה
-        if (currentIndex === 0 && history.length > 0) prefix = "זהו המניין הראשון ";
-        if (currentIndex === minyanim.length - 1 && history.length > 0) prefix = "זהו המניין האחרון ";
+        // הודעות מערכת רק אם זו תחילת/סוף רשימה והמשתמש ניסה לזוז לשם
+        if (history.length === 0) prefix = "לא נמצאו מניינים נוספים להיום מנייני מחר ";
+        if (currentIndex === 0 && lastMove === '2') prefix = "זהו המניין הראשון ";
+        if (currentIndex === minyanim.length - 1 && lastMove === '1') prefix = "זהו המניין האחרון ";
 
         textToRead = cleanForTTS(`${prefix} תפילת ${m.type} ב${m.shul} בשעה ${m.time}`);
+        console.log(`משמיע מניין בודד: ${m.time} ב${m.shul}`);
     }
 
     const menu = cleanForTTS("לשמיעה חוזרת הקש אפס למניין הבא אחת לקודם שתיים לכל המניינים שלוש ליציאה ארבע");
 
-    // שליחת התשובה הפשוטה ביותר - ללא שום משתנים נלווים!
-    // ימות המשיח יזכרו לבד את ה-menu_choice וישלחו לנו אותו שוב בפעם הבאה
+    // 6. שליחת התשובה
+    // שימו לב: אין כאן שום משתנה נוסף (&index=...) כי אנחנו מסתמכים על ההיסטוריה שימות המשיח שולחים לנו ב-menu_choice
     const responseString = `read=t-${textToRead} ${menu}=menu_choice,number,1,1,7,no,no,no`;
     
-    console.log(`Current Index: ${currentIndex}. Sending response.`);
     res.send(responseString);
 
   } catch (error) {
