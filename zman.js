@@ -5,30 +5,25 @@ const axios = require('axios');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// פונקציה משודרגת לניקוי והרחבת ראשי תיבות עבור מנוע הדיבור (TTS)
+// הפונקציה תרוץ רק פעם אחת בסוף על המשפט הסופי שיוצא למאזין
 function cleanForTTS(str) {
     if (!str) return '';
     
-    // 1. ניקוי סימני מילוט וגרשיים משובשים מה-JSON (כמו \\\" וכדומה)
     let cleaned = str.replace(/\\+/g, '').replace(/"/g, '');
     
-    // 2. הפיכת ראשי תיבות למילים מלאות כדי שהמערכת תקריא נכון
+    // החלפת ראשי תיבות למילים מלאות
     cleaned = cleaned.replace(/ב?בימ["׳״]?ד/g, (match) => match.startsWith('ב') ? 'בבית המדרש' : 'בית המדרש');
     cleaned = cleaned.replace(/עז["׳״]?נ/g, 'עזרת נשים');
-    cleaned = cleaned.replace(/ק\s*ד['״׳]?/g, 'קומה ד'); // הפיכת ק ד' לקומה ד
+    cleaned = cleaned.replace(/ק\s*ד['״׳]?/g, 'קומה ד');
     
-    // 3. החלפת תווים מיוחדים מציקים ברווחים
+    // ניקוי סימנים מציקים
     cleaned = cleaned.replace(/[.\-"&%=_]/g, ' ');
     
-    // 4. צמצום רווחים כפולים שנוצרו מהניקוי
     return cleaned.replace(/\s+/g, ' ').trim();
 }
 
 app.get('/minyan', async (req, res) => {
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    const timeLog = new Date().toLocaleTimeString('he-IL', { timeZone: 'Asia/Jerusalem' });
-
-    console.log(`\n\n========== [${timeLog}] פנייה חדשה ומסוננת ==========`);
     
     let history = [];
     if (Array.isArray(req.query.menu_choice)) {
@@ -48,6 +43,7 @@ app.get('/minyan', async (req, res) => {
 
         const TARGET_URL = `https://zmanimboard.com/GetAllClientData.aspx/?CL_ID=1287&Lyear=${lyear}&Lmonth=${lmonth}&Lday=${lday}&UserPass=Bc3456`;
         
+        // שליפת הנתונים מהשרת
         const response = await axios.get(TARGET_URL);
         
         let resData = response.data;
@@ -56,7 +52,7 @@ app.get('/minyan', async (req, res) => {
         }
 
         let minyanim = [];
-        let seenMinyanim = new Set(); // סט שמטרתו למנוע כפילויות בהקראה
+        let seenMinyanim = new Set(); // מניעת כפילויות
 
         if (resData && resData.All_Styles_Elements) {
             const elements = typeof resData.All_Styles_Elements === 'string' 
@@ -88,31 +84,22 @@ app.get('/minyan', async (req, res) => {
 
                                 if (!rawName || !timeStr || !timeStr.includes(':')) continue;
 
-                                // ניקוי והרחבת ראשי התיבות כבר בשלב החילוץ
-                                const cleanName = cleanForTTS(rawName);
-                                const cleanTime = timeStr.trim();
-
-                                // מפתח ייחודי למניעת כפילויות (שם נקי + שעה)
-                                const minyanKey = `${cleanName}_${cleanTime}`;
-                                
-                                if (seenMinyanim.has(minyanKey)) {
-                                    continue; // אם המניין כבר קיים, דלג עליו ולא יוכנס שוב!
-                                }
+                                // בדיקת כפילות סופר מהירה על טקסט גולמי ללא עיבוד
+                                const minyanKey = `${rawName.trim()}_${timeStr.trim()}`;
+                                if (seenMinyanim.has(minyanKey)) continue;
                                 seenMinyanim.add(minyanKey);
 
-                                const parts = cleanTime.split(':');
+                                const parts = timeStr.split(':');
                                 const currentMinutes = parseInt(parts[0]) * 60 + parseInt(parts[1]);
 
                                 minyanim.push({
-                                    type: cleanName,
-                                    time: cleanTime,
+                                    type: rawName.trim(),
+                                    time: timeStr.trim(),
                                     minutes: currentMinutes
                                 });
                             }
                         }
-                    } catch (e) {
-                        // דילוג על שורות לא תקינות
-                    }
+                    } catch (e) {}
                 }
             }
         }
@@ -121,7 +108,7 @@ app.get('/minyan', async (req, res) => {
             return res.send(`id_list_message=t-לא נמצאו מניינים מעודכנים בלוח&hangup=yes`);
         }
 
-        // מיון כרונולוגי של המניינים הייחודיים
+        // מיון מהיר
         minyanim.sort((a, b) => a.minutes - b.minutes);
         
         let startIndex = minyanim.findIndex(m => m.minutes >= curMin);
@@ -148,12 +135,11 @@ app.get('/minyan', async (req, res) => {
             return res.send(`id_list_message=t-להתראות&hangup=yes`);
         }
 
-        let textToRead = "";
+        let rawTextToRead = "";
         
         if (lastMove === '3') {
-            // הקראת כל המניינים ללא כפילויות
-            let all = minyanim.map(m => `${m.type} בשעה ${m.time}`).join('. ');
-            textToRead = "רשימת כל המניינים היא: " + all;
+            let all = minyanim.map(m => `תפילת ${m.type} בשעה ${m.time}`).join('. ');
+            rawTextToRead = "רשימת כל המניינים היא: " + all;
         } else {
             const m = minyanim[currentIndex];
             let prefix = "";
@@ -165,23 +151,21 @@ app.get('/minyan', async (req, res) => {
                 if (currentIndex === minyanim.length - 1 && lastMove === '1') prefix = "זהו המניין האחרון. ";
             }
 
-            textToRead = `${prefix} ${m.type} בשעה ${m.time}`;
+            rawTextToRead = `${prefix} תפילת ${m.type} בשעה ${m.time}`;
         }
 
-        const menu = "לשמיעה חוזרת הקש אפס. למניין הבא אחת. לקודם שתיים. לכל המניינים שלוש. ליציאה ארבע.";
-        const responseString = `read=t-${textToRead} ${menu}=menu_choice,number,1,1,7,no,no,no`;
+        // הרצה של פונקציית הניקוי הכבדה רק פעם אחת בודדת על המשפט הסופי!
+        const textToRead = cleanForTTS(rawTextToRead);
+        const menu = "לשמיעה חוזרת הקש אפס. למניין הבא אחת. לקודם שתיים. לכל המניינים שלוכש. ליציאה ארבע.";
         
-        res.send(responseString);
-        console.log(`[LOG] הושמע נקי: ${textToRead}`);
+        res.send(`read=t-${textToRead} ${menu}=menu_choice,number,1,1,7,no,no,no`);
 
     } catch (error) {
-        console.error("[ERROR] שגיאה:", error.message);
         res.send(`id_list_message=t-שגיאה בתקשורת עם שרת הלוח&hangup=yes`);
     }
 });
 
-// התאמה ל-Vercel או הרצה מקומית
 if (process.env.NODE_ENV !== 'production') {
-    app.listen(port, () => console.log(`Minyanim Server running on port ${port}`));
+    app.listen(port, () => console.log(`Server running on port ${port}`));
 }
 module.exports = app;
