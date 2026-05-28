@@ -168,4 +168,4 @@ app.get('/minyan', async (req, res) => {
     }
 });
 
-app.listen(port, () => console.log(`Minyanim Server is running on port ${port}`));
+module.exports = app;
