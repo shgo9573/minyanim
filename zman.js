@@ -108,7 +108,7 @@ app.get('/minyan', async (req, res) => {
                 }
             }
         }
-
+    console.log(`[DEBUG] נמצא מניין: "${name}" בשעה: "${timeStr}"`);
         // מיון כרונולוגי של שתי הרשימות בנפרד
         weekdayMinyanim.sort((a, b) => a.minutes - b.minutes);
         shabbatMinyanim.sort((a, b) => a.minutes - b.minutes);
