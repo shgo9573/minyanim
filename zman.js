@@ -94,19 +94,21 @@ async function fetchAndParseMinyanim() {
 
         for (let row of elements.data) {
             const elementName = row[nameIdx] || "";
+            const nameCleaned = elementName.trim();
             
-            // סינון קשוח: מושך נתונים אך ורק מהאלמנט הראשי המוסמך "המניין הבא"
-            if (elementName.trim() === "המניין הבא") {
+            // סינון קשוח: מושך נתונים אך ורק מהאלמנט המרכזי "המניין הבא" או "המנין הבא"
+            if (nameCleaned === "המניין הבא" || nameCleaned === "המנין הבא") {
                 const jsonStr = row[jsonIdx];
                 if (!jsonStr) continue;
 
                 try {
                     const innerObj = JSON.parse(jsonStr);
                     if (innerObj && innerObj.columns && innerObj.data) {
-                        const innerNameIdx = innerObj.columns.indexOf("Name");
-                        const innerTimeIdx = innerObj.columns.indexOf("Time_View");
-                        const innerIsTitleIdx = innerObj.columns.indexOf("Is_Title");
-                        const innerMarkIdx = innerObj.columns.indexOf("Mark");
+                        // איתור אינדקסים בצורה בטוחה שאינה תלויה באותיות רישיות/קטנות או רווחים
+                        const innerNameIdx = innerObj.columns.findIndex(col => col.trim().toLowerCase() === "name");
+                        const innerTimeIdx = innerObj.columns.findIndex(col => col.trim().toLowerCase() === "time_view");
+                        const innerIsTitleIdx = innerObj.columns.findIndex(col => col.trim().toLowerCase() === "is_title");
+                        const innerMarkIdx = innerObj.columns.findIndex(col => col.trim().toLowerCase() === "mark");
 
                         for (let innerRow of innerObj.data) {
                             if (innerIsTitleIdx !== -1 && innerRow[innerIsTitleIdx] === true) continue;
@@ -127,7 +129,22 @@ async function fetchAndParseMinyanim() {
 
                             if (!name || !timeStr || !timeStr.includes(':')) continue;
 
-                            const minyanKey = `${name.trim()}_${timeStr.trim()}`;
+                            // שסתום ביטחון מבוסס שמות: תפילות השייכות לשבת יסווגו כשבת בכל מקרה
+                            const cleanName = name.trim();
+                            if (
+                                cleanName.includes('עש"ק') || 
+                                cleanName.includes('עשק') || 
+                                cleanName.includes('הדל"נ') || 
+                                cleanName.includes('מוצ"ש') || 
+                                cleanName.includes('מוצש') || 
+                                cleanName.includes('אבות ובנים') ||
+                                cleanName === 'מעריב' || // ערבית ליל שבת
+                                (cleanName.startsWith('שחרית') && !cleanName.includes('-')) // שחרית א' / ב' של שבת לעומת "שחרית א'-נץ" של חול
+                            ) {
+                                isWeekday = false;
+                            }
+
+                            const minyanKey = `${cleanName}_${timeStr.trim()}`;
                             if (seenMinyanim.has(minyanKey)) continue;
                             seenMinyanim.add(minyanKey);
 
@@ -135,7 +152,7 @@ async function fetchAndParseMinyanim() {
                             const currentMinutes = parseInt(parts[0]) * 60 + parseInt(parts[1]);
 
                             const minyanObject = {
-                                type: name.trim(),
+                                type: cleanName,
                                 time: timeStr.trim(),
                                 minutes: currentMinutes
                             };
@@ -152,7 +169,9 @@ async function fetchAndParseMinyanim() {
         }
     }
     
-    // אנו לא מבצעים מיון (sort) לרשימות! הלוח כבר מספק אותן בסדר כרונולוגי טבעי ומדוייק מהבסיס.
+    // מיון כרונולוגי של מנייני החול בלבד [1]
+    // מנייני השבת נשארים ללא מיון כדי לשמור על הסדר המקורי והמדויק של הלוח (ערב שבת -> שבת בבוקר -> מוצ"ש) [1]
+    weekdayMinyanim.sort((a, b) => a.minutes - b.minutes);
 
     return { weekdayMinyanim, shabbatMinyanim, israelTime };
 }
@@ -197,7 +216,7 @@ app.get('/minyan', async (req, res) => {
         const activeMinyanim = isShabbatMode ? shabbatMinyanim : weekdayMinyanim;
         const currentModeLabel = isShabbatMode ? "שבת" : "חול";
 
-        // בגלל שאין מיון, אנו מוצאים את האינדקס של המניין הבא באופן ליניארי
+        // מציאת האינדקס של המניין הבא
         let startIndex = activeMinyanim.findIndex(m => m.minutes >= curMin);
         let isTomorrow = false;
 
