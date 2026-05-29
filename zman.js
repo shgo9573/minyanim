@@ -95,15 +95,10 @@ async function fetchAndParseMinyanim() {
         for (let row of elements.data) {
             const elementName = row[nameIdx] || "";
             
-            if (elementName.includes("מנין") || elementName.includes("מניין") || elementName.includes("תפיל") || elementName.includes("חול")) {
+            // סינון קשוח: מושך נתונים אך ורק מהאלמנט הראשי המוסמך "המניין הבא"
+            if (elementName.trim() === "המניין הבא") {
                 const jsonStr = row[jsonIdx];
                 if (!jsonStr) continue;
-
-                // קביעת ברירת מחדל חכמה לפי סוג האלמנט האב (למניעת ערבוב כשעמודת ה-Mark ריקה)
-                let defaultIsWeekday = true;
-                if (elementName.includes("שבת") || elementName.includes("שב\"ק")) {
-                    defaultIsWeekday = false;
-                }
 
                 try {
                     const innerObj = JSON.parse(jsonStr);
@@ -120,7 +115,7 @@ async function fetchAndParseMinyanim() {
                             const timeStr = innerRow[innerTimeIdx];
                             
                             // מנגנון חילוץ בטוח לערך ה-Mark (מתמודד עם בוליאני, מחרוזת ומספרים)
-                            let isWeekday = defaultIsWeekday;
+                            let isWeekday = true; 
                             if (innerMarkIdx !== -1 && innerRow[innerMarkIdx] !== null && innerRow[innerMarkIdx] !== undefined && innerRow[innerMarkIdx] !== '') {
                                 const rawMark = String(innerRow[innerMarkIdx]).trim().toLowerCase();
                                 if (rawMark === 'false' || rawMark === '0') {
@@ -157,8 +152,7 @@ async function fetchAndParseMinyanim() {
         }
     }
     
-    weekdayMinyanim.sort((a, b) => a.minutes - b.minutes);
-    shabbatMinyanim.sort((a, b) => a.minutes - b.minutes);
+    // אנו לא מבצעים מיון (sort) לרשימות! הלוח כבר מספק אותן בסדר כרונולוגי טבעי ומדוייק מהבסיס.
 
     return { weekdayMinyanim, shabbatMinyanim, israelTime };
 }
@@ -203,6 +197,7 @@ app.get('/minyan', async (req, res) => {
         const activeMinyanim = isShabbatMode ? shabbatMinyanim : weekdayMinyanim;
         const currentModeLabel = isShabbatMode ? "שבת" : "חול";
 
+        // בגלל שאין מיון, אנו מוצאים את האינדקס של המניין הבא באופן ליניארי
         let startIndex = activeMinyanim.findIndex(m => m.minutes >= curMin);
         let isTomorrow = false;
 
@@ -261,8 +256,9 @@ app.get('/minyan', async (req, res) => {
             textToRead = cleanForTTS(`${prefix} תפילת ${m.type} בשעה ${m.time}`);
         }
 
+        // שינוי הפרמטרים של read ל- "no" ו- "No" כדי לבטל אישורי הקשה מעצבנים בימות המשיח
         const menu = cleanForTTS("לשמיעה חוזרת הקש אפס. למניין הבא אחת. לקודם שתיים. לכל מנייני החול שלוש. למנייני שבת חמש. ליציאה ארבע.");
-        const responseString = `read=t-${textToRead} ${menu}=menu_choice,number,1,1,7,no,no,no`;
+        const responseString = `read=t-${textToRead} ${menu}=menu_choice,no,1,1,7,No,No,`;
         
         res.send(responseString);
         console.log(`[LOG] הושמע: ${textToRead}`);
@@ -303,13 +299,13 @@ app.get('/shabbat', async (req, res) => {
             return res.send(`id_list_message=t-להתראות&hangup=yes`);
         }
 
-        // מקריא ישירות את כל המניינים ברצף ללא מציאת המניין הקרוב ביותר [1]
+        // מקריא ישירות את כל המניינים ברצף בסדר כרונולוגי טבעי ומדוייק (ערב שבת -> שבת בוקר -> מוצ"ש) [1]
         let allShabbat = shabbatMinyanim.map(m => `${m.type} בשעה ${m.time}`).join('. ');
         let textToRead = cleanForTTS("מנייני השבת הם: " + allShabbat);
 
-        // תפריט פשוט לשמיעה חוזרת או יציאה
+        // שינוי הפרמטרים של read ל- "no" ו- "No" כדי לבטל אישורי הקשה מעצבנים בימות המשיח
         const menu = cleanForTTS("לשמיעה חוזרת הקש אפס. ליציאה ארבע.");
-        const responseString = `read=t-${textToRead} ${menu}=menu_choice,number,1,1,7,no,no,no`;
+        const responseString = `read=t-${textToRead} ${menu}=menu_choice,no,1,1,7,No,No,`;
         
         res.send(responseString);
         console.log(`[LOG - שבת] הושמע: ${textToRead}`);
