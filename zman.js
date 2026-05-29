@@ -14,7 +14,9 @@ function cleanForTTS(str) {
     
     // מילון מקיף לפתיחת ראשי תיבות של עולם התפילה והשבת
     const replacements = [
+        { pattern: /שעש["׳״]?ק/g, replace: "שערב שבת קודש" },
         { pattern: /עש["׳״]?ק/g, replace: "ערב שבת קודש" },
+        { pattern: /ששב["׳״]?ק/g, replace: "ששבת קודש" },
         { pattern: /שב["׳״]?ק/g, replace: "שבת קודש" },
         { pattern: /מוצ["׳״]?ש/g, replace: "מוצאי שבת" },
         { pattern: /הדל["׳״]?נ/g, replace: "הדלקת נרות" },
@@ -158,7 +160,7 @@ async function fetchAndParseMinyanim() {
 
 
 // ==========================================
-// 1. הנתיב הראשי: משולב (חול ושבת לפי השעות שביקשת)
+// 1. הנתיב הראשי: משולב (חול ושבת לפי שעות המעבר)
 // ==========================================
 app.get('/minyan', async (req, res) => {
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
@@ -244,7 +246,8 @@ app.get('/minyan', async (req, res) => {
                 if (isShabbatMode) {
                     prefix = isTomorrow ? "תפילת השבת הבאה היא: " : "המניין הבא לשבת הוא: ";
                 } else {
-                    prefix = isTomorrow ? "לא נותרו מניינים להיום. מנייני מחר הם: " : "המניין הקרוב ביותר לחול הוא: ";
+                    // הוסרה המילה "לחול" לבקשתך
+                    prefix = isTomorrow ? "לא נותרו מניינים להיום. מנייני מחר הם: " : "המניין הקרוב ביותר הוא: ";
                 }
             } else {
                 if (currentIndex === 0 && lastMove === '2') prefix = `זהו מניין ה${currentModeLabel} הראשון. `;
@@ -268,13 +271,13 @@ app.get('/minyan', async (req, res) => {
 
 
 // ==========================================
-// 2. הקישור הייעודי: שבת בלבד
+// 2. הקישור הייעודי: שבת בלבד (הקראה מלאה ברצף)
 // ==========================================
 app.get('/shabbat', async (req, res) => {
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     const timeLog = new Date().toLocaleTimeString('he-IL', { timeZone: 'Asia/Jerusalem' });
 
-    console.log(`\n\n========== [${timeLog}] פנייה חדשה: שבת בלבד ==========`);
+    console.log(`\n\n========== [${timeLog}] פנייה חדשה: שבת בלבד (הקראה מלאה ברצף) ==========`);
     
     let history = [];
     if (Array.isArray(req.query.menu_choice)) {
@@ -284,29 +287,10 @@ app.get('/shabbat', async (req, res) => {
     }
 
     try {
-        const { shabbatMinyanim, israelTime } = await fetchAndParseMinyanim();
-        const curMin = israelTime.getHours() * 60 + israelTime.getMinutes();
+        const { shabbatMinyanim } = await fetchAndParseMinyanim();
 
         if (shabbatMinyanim.length === 0) {
             return res.send(`id_list_message=t-לא נמצאו מנייני שבת מוגדרים בלוח&hangup=yes`);
-        }
-
-        let startIndex = shabbatMinyanim.findIndex(m => m.minutes >= curMin);
-        let isTomorrow = false;
-
-        if (startIndex === -1) {
-            startIndex = 0;
-            isTomorrow = true; 
-        }
-
-        let currentIndex = startIndex;
-
-        for (let move of history) {
-            if (move === '1') { 
-                if (currentIndex < shabbatMinyanim.length - 1) currentIndex++;
-            } else if (move === '2') { 
-                if (currentIndex > 0) currentIndex--;
-            }
         }
 
         const lastMove = history.length > 0 ? history[history.length - 1] : null;
@@ -315,26 +299,12 @@ app.get('/shabbat', async (req, res) => {
             return res.send(`id_list_message=t-להתראות&hangup=yes`);
         }
 
-        let textToRead = "";
-        
-        if (lastMove === '3') {
-            let allShabbat = shabbatMinyanim.map(m => `${m.type} בשעה ${m.time}`).join('. ');
-            textToRead = cleanForTTS("מנייני השבת הם: " + allShabbat);
-        } else {
-            const m = shabbatMinyanim[currentIndex];
-            let prefix = "";
-            
-            if (history.length === 0) {
-                prefix = isTomorrow ? "תפילת השבת הבאה היא: " : "המניין הבא לשבת הוא: ";
-            } else {
-                if (currentIndex === 0 && lastMove === '2') prefix = "זהו מניין השבת הראשון. ";
-                if (currentIndex === shabbatMinyanim.length - 1 && lastMove === '1') prefix = "זהו מניין השבת האחרון. ";
-            }
+        // מקריא ישירות את כל המניינים ברצף ללא מציאת המניין הקרוב ביותר
+        let allShabbat = shabbatMinyanim.map(m => `${m.type} בשעה ${m.time}`).join('. ');
+        let textToRead = cleanForTTS("מנייני השבת הם: " + allShabbat);
 
-            textToRead = cleanForTTS(`${prefix} תפילת ${m.type} בשעה ${m.time}`);
-        }
-
-        const menu = cleanForTTS("לשמיעה חוזרת הקש אפס. למניין הבא אחת. לקודם שתיים. לשמיעת כל מנייני השבת שלוש. ליציאה ארבע.");
+        // תפריט פשוט לשמיעה חוזרת או יציאה
+        const menu = cleanForTTS("לשמיעה חוזרת הקש אפס. ליציאה ארבע.");
         const responseString = `read=t-${textToRead} ${menu}=menu_choice,number,1,1,7,no,no,no`;
         
         res.send(responseString);
