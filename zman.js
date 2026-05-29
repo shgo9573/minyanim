@@ -5,20 +5,58 @@ const axios = require('axios');
 const app = express();
 const port = process.env.PORT || 3000;
 
+// פונקציה חכמה לפתיחת ראשי תיבות וניקוי טקסט להקראה קולית ברורה
 function cleanForTTS(str) {
     if (!str) return '';
     
+    // הסרת גרשיים מיוחדים וסלאשים של מערכת הנתונים
     let cleaned = str.replace(/\\+/g, '').replace(/"/g, '');
     
-    // הפיכת ראשי תיבות למילים מלאות
-    cleaned = cleaned.replace(/ב?בימ["׳״]?ד/g, (match) => match.startsWith('ב') ? 'בבית המדרש' : 'בית המדרש');
-    cleaned = cleaned.replace(/עז["׳״]?נ/g, 'עזרת נשים');
-    cleaned = cleaned.replace(/ק\s*ד['״׳]?/g, 'קומה ד');
-    
+    // מילון מקיף לפתיחת ראשי תיבות של עולם התפילה והשבת
+    const replacements = [
+        { pattern: /עש["׳״]?ק/g, replace: "ערב שבת קודש" },
+        { pattern: /שב["׳״]?ק/g, replace: "שבת קודש" },
+        { pattern: /מוצ["׳״]?ש/g, replace: "מוצאי שבת" },
+        { pattern: /הדל["׳״]?נ/g, replace: "הדלקת נרות" },
+        { pattern: /בימ["׳״]?ד/g, replace: "בית המדרש" },
+        { pattern: /עז["׳״]?נ/g, replace: "עזרת נשים" },
+        { pattern: /דק['״׳]/g, replace: "דקות" },
+        { pattern: /שחרית\s+א['׳]\s*-\s*נץ/g, replace: "שחרית א הנץ החמה" },
+        { pattern: /נץ/g, replace: "הנץ החמה" },
+        { pattern: /ביה["׳״]?ז/g, replace: "בין הזמנים" },
+        { pattern: /ר["׳״]?ח/g, replace: "ראש חודש" },
+        { pattern: /יו["׳״]?ט/g, replace: "יום טוב" },
+        { pattern: /עיו["׳״]?ט/g, replace: "ערב יום טוב" },
+        { pattern: /יו["׳״]?כ/g, replace: "יום כיפור" },
+        { pattern: /ר["׳״]?ה/g, replace: "ראש השנה" },
+        { pattern: /פר["׳״]?ש/g, replace: "פרשת השבוע" },
+        { pattern: /משנ["׳״]?ב/g, replace: "משנה ברורה" },
+        { pattern: /ק["׳״]?ד/g, replace: "קומה ד" },
+        { pattern: /ע["׳״]?ש/g, replace: "ערב שבת" },
+        { pattern: /ק["׳״]?ש/g, replace: "קריאת שמע" },
+        { pattern: /גר["׳״]?א/g, replace: "הגר א" },
+        { pattern: /מג["׳״]?א/g, replace: "מגן אברהם" },
+        { pattern: /סזק["׳״]?ש/g, replace: "סוף זמן קריאת שמע" },
+        { pattern: /סז["׳״]?ת/g, replace: "סוף זמן תפילה" },
+        { pattern: /בה["׳״]?ח/g, replace: "הבחור החשוב" },
+        { pattern: /ע["׳״]?ה/g, replace: "עליה השלום" },
+        { pattern: /זצ["׳״]?ל/g, replace: "זכר צדיק לברכה" },
+        { pattern: /ני["׳״]?ו/g, replace: "נרו יאיר ויזרח" },
+        { pattern: /עב["׳״]?ג/g, replace: "עם בת גילו" },
+        { pattern: /לע["׳״]?נ/g, replace: "לעילוי נשמת" },
+        { pattern: /ב["׳״]?ר/g, replace: "בן רבי" },
+        { pattern: /ש["׳״]?ק/g, replace: "שבת קודש" }
+    ];
+
+    replacements.forEach(({ pattern, replace }) => {
+        cleaned = cleaned.replace(pattern, replace);
+    });
+
+    // הסרת תווים מיוחדים שמפריעים למנוע ההקראה (TTS)
     return cleaned.replace(/[.\-"&%=]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-// פונקציית עזר למשיכת הנתונים וחלוקתם לחול ושבת
+// פונקציה מרכזית למשיכת הנתונים וחלוקתם חול/שבת בצורה בטוחה
 async function fetchAndParseMinyanim() {
     const now = new Date();
     const israelTime = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Jerusalem" }));
@@ -54,6 +92,12 @@ async function fetchAndParseMinyanim() {
                 const jsonStr = row[jsonIdx];
                 if (!jsonStr) continue;
 
+                // קביעת ברירת מחדל חכמה לפי סוג האלמנט האב (למניעת ערבוב כשעמודת ה-Mark ריקה)
+                let defaultIsWeekday = true;
+                if (elementName.includes("שבת") || elementName.includes("שב\"ק")) {
+                    defaultIsWeekday = false;
+                }
+
                 try {
                     const innerObj = JSON.parse(jsonStr);
                     if (innerObj && innerObj.columns && innerObj.data) {
@@ -67,7 +111,17 @@ async function fetchAndParseMinyanim() {
 
                             const name = innerRow[innerNameIdx];
                             const timeStr = innerRow[innerTimeIdx];
-                            const isWeekday = innerMarkIdx !== -1 ? innerRow[innerMarkIdx] === true : true;
+                            
+                            // מנגנון חילוץ בטוח לערך ה-Mark (מתמודד עם בוליאני, מחרוזת ומספרים)
+                            let isWeekday = defaultIsWeekday;
+                            if (innerMarkIdx !== -1 && innerRow[innerMarkIdx] !== null && innerRow[innerMarkIdx] !== undefined && innerRow[innerMarkIdx] !== '') {
+                                const rawMark = String(innerRow[innerMarkIdx]).trim().toLowerCase();
+                                if (rawMark === 'false' || rawMark === '0') {
+                                    isWeekday = false;
+                                } else if (rawMark === 'true' || rawMark === '1') {
+                                    isWeekday = true;
+                                }
+                            }
 
                             if (!name || !timeStr || !timeStr.includes(':')) continue;
 
@@ -125,14 +179,12 @@ app.get('/minyan', async (req, res) => {
         const dayOfWeek = israelTime.getDay();
         const currentHour = israelTime.getHours();
 
-        // הגדרת מצב שבת/חול לפי השעות המדויקות שביקשת:
+        // הגדרת מצב שבת/חול לפי השעות שביקשת
         let isShabbatMode = false;
         if (dayOfWeek === 5) {
-            // יום שישי: החל מהשעה 14:00 עוברים לשבת [1].
-            isShabbatMode = (currentHour >= 14);
+            isShabbatMode = (currentHour >= 14); // יום שישי החל מ-14:00 עובר לשבת
         } else if (dayOfWeek === 6) {
-            // יום שבת: עד השעה 19:00 מציגים שבת. אחרי 19:00 עוברים לחול [1].
-            isShabbatMode = (currentHour < 19);
+            isShabbatMode = (currentHour < 19);  // יום שבת עד 19:00 מציג שבת
         } else {
             isShabbatMode = false;
         }
@@ -216,7 +268,7 @@ app.get('/minyan', async (req, res) => {
 
 
 // ==========================================
-// 2. הקישור החדש: שבת בלבד (ממנחה של עש"ק ועד מוצ"ש)
+// 2. הקישור הייעודי: שבת בלבד
 // ==========================================
 app.get('/shabbat', async (req, res) => {
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
@@ -239,7 +291,6 @@ app.get('/shabbat', async (req, res) => {
             return res.send(`id_list_message=t-לא נמצאו מנייני שבת מוגדרים בלוח&hangup=yes`);
         }
 
-        // הניווט כאן תמיד מתבצע ברשימת השבת
         let startIndex = shabbatMinyanim.findIndex(m => m.minutes >= curMin);
         let isTomorrow = false;
 
@@ -267,7 +318,6 @@ app.get('/shabbat', async (req, res) => {
         let textToRead = "";
         
         if (lastMove === '3') {
-            // השמעה מרוכזת של כל מנייני השבת
             let allShabbat = shabbatMinyanim.map(m => `${m.type} בשעה ${m.time}`).join('. ');
             textToRead = cleanForTTS("מנייני השבת הם: " + allShabbat);
         } else {
@@ -284,7 +334,6 @@ app.get('/shabbat', async (req, res) => {
             textToRead = cleanForTTS(`${prefix} תפילת ${m.type} בשעה ${m.time}`);
         }
 
-        // תפריט ייעודי מותאם לשבת בלבד (בלי תת-סעיפים של מנייני חול)
         const menu = cleanForTTS("לשמיעה חוזרת הקש אפס. למניין הבא אחת. לקודם שתיים. לשמיעת כל מנייני השבת שלוש. ליציאה ארבע.");
         const responseString = `read=t-${textToRead} ${menu}=menu_choice,number,1,1,7,no,no,no`;
         
