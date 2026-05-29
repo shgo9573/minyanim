@@ -39,6 +39,10 @@ app.get('/minyan', async (req, res) => {
         const lmonth = israelTime.getMonth() + 1; 
         const lday = israelTime.getDate();
         const curMin = israelTime.getHours() * 60 + israelTime.getMinutes();
+        const dayOfWeek = israelTime.getDay(); // 0 = ראשון, 5 = שישי, 6 = שבת
+
+        // זיהוי האם אנו במצב שבת (מיום שישי ועד מוצאי שבת)
+        const isShabbatMode = (dayOfWeek === 5 || dayOfWeek === 6);
 
         const TARGET_URL = `https://zmanimboard.com/GetAllClientData.aspx/?CL_ID=1287&Lyear=${lyear}&Lmonth=${lmonth}&Lday=${lday}&UserPass=Bc3456`;
         
@@ -49,8 +53,8 @@ app.get('/minyan', async (req, res) => {
             resData = JSON.parse(resData);
         }
 
-        let weekdayMinyanim = []; // מנייני חול
-        let shabbatMinyanim = []; // מנייני שבת
+        let weekdayMinyanim = []; // מנייני חול (Mark = true)
+        let shabbatMinyanim = []; // מנייני שבת/עש"ק/מוצ"ש (Mark = false)
         let seenMinyanim = new Set(); 
 
         if (resData && resData.All_Styles_Elements) {
@@ -74,12 +78,15 @@ app.get('/minyan', async (req, res) => {
                             const innerNameIdx = innerObj.columns.indexOf("Name");
                             const innerTimeIdx = innerObj.columns.indexOf("Time_View");
                             const innerIsTitleIdx = innerObj.columns.indexOf("Is_Title");
+                            const innerMarkIdx = innerObj.columns.indexOf("Mark"); // העמודה שמפרידה חול/שבת
 
                             for (let innerRow of innerObj.data) {
                                 if (innerIsTitleIdx !== -1 && innerRow[innerIsTitleIdx] === true) continue;
 
                                 const name = innerRow[innerNameIdx];
                                 const timeStr = innerRow[innerTimeIdx];
+                                // אם Mark הוא true זה חול, אחרת זה שבת
+                                const isWeekday = innerMarkIdx !== -1 ? innerRow[innerMarkIdx] === true : true;
 
                                 if (!name || !timeStr || !timeStr.includes(':')) continue;
 
@@ -96,11 +103,11 @@ app.get('/minyan', async (req, res) => {
                                     minutes: currentMinutes
                                 };
 
-                                // מיון מוקדם: אם השם מכיל "שבת", זה הולך לרשימת שבת, אחרת לחול
-                                if (name.includes("שבת")) {
-                                    shabbatMinyanim.push(minyanObject);
-                                } else {
+                                // פיצול מדויק לפי הגדרת הלוח
+                                if (isWeekday) {
                                     weekdayMinyanim.push(minyanObject);
+                                } else {
+                                    shabbatMinyanim.push(minyanObject);
                                 }
                             }
                         }
@@ -108,7 +115,8 @@ app.get('/minyan', async (req, res) => {
                 }
             }
         }
-        // מיון כרונולוגי של שתי הרשימות בנפרד
+        
+        // מיון כרונולוגי של שתי הרשימות
         weekdayMinyanim.sort((a, b) => a.minutes - b.minutes);
         shabbatMinyanim.sort((a, b) => a.minutes - b.minutes);
 
@@ -116,8 +124,11 @@ app.get('/minyan', async (req, res) => {
             return res.send(`id_list_message=t-לא נמצאו מניינים מעודכנים בלוח&hangup=yes`);
         }
 
-        // כברירת מחדל מנווטים במנייני חול
-        let startIndex = weekdayMinyanim.findIndex(m => m.minutes >= curMin);
+        // בחירת רשימת המניינים הפעילה לניווט בהתאם ליום הנוכחי (חול או שבת)
+        const activeMinyanim = isShabbatMode ? shabbatMinyanim : weekdayMinyanim;
+        const currentModeLabel = isShabbatMode ? "שבת" : "חול";
+
+        let startIndex = activeMinyanim.findIndex(m => m.minutes >= curMin);
         let isTomorrow = false;
 
         if (startIndex === -1) {
@@ -130,7 +141,7 @@ app.get('/minyan', async (req, res) => {
         // ניווט לפי היסטוריית הקשות
         for (let move of history) {
             if (move === '1') { 
-                if (currentIndex < weekdayMinyanim.length - 1) currentIndex++;
+                if (currentIndex < activeMinyanim.length - 1) currentIndex++;
             } else if (move === '2') { 
                 if (currentIndex > 0) currentIndex--;
             }
@@ -145,33 +156,41 @@ app.get('/minyan', async (req, res) => {
         let textToRead = "";
         
         if (lastMove === '3') {
-            // הקראת כל מנייני החול
-            let all = weekdayMinyanim.map(m => `תפילת ${m.type} בשעה ${m.time}`).join('. ');
-            textToRead = cleanForTTS("רשימת כל מנייני החול היא: " + all);
+            // הקראת כל מנייני החול לבקשת המשתמש
+            if (weekdayMinyanim.length === 0) {
+                textToRead = "לא נמצאו מנייני חול מוגדרים בלוח.";
+            } else {
+                let all = weekdayMinyanim.map(m => `תפילת ${m.type} בשעה ${m.time}`).join('. ');
+                textToRead = cleanForTTS("רשימת כל מנייני החול היא: " + all);
+            }
         } else if (lastMove === '5') {
-            // הקראת כל מנייני השבת
+            // הקראת כל מנייני השבת לבקשת המשתמש
             if (shabbatMinyanim.length === 0) {
                 textToRead = "לא נמצאו מנייני שבת מוגדרים בלוח.";
             } else {
                 let allShabbat = shabbatMinyanim.map(m => `${m.type} בשעה ${m.time}`).join('. ');
-                textToRead = cleanForTTS("מנייני השבת הם: " + allShabbat);
+                textToRead = cleanForTTS("מנייני השבת והתפילות הם: " + allShabbat);
             }
         } else {
-            // המניין הקרוב (מחול)
-            const m = weekdayMinyanim[currentIndex];
+            // הקראת המניין הקרוב (מתוך הרשימה הפעילה - שבת או חול)
+            const m = activeMinyanim[currentIndex];
             let prefix = "";
             
             if (history.length === 0) {
-                prefix = isTomorrow ? "לא נותרו מניינים להיום. מנייני מחר הם: " : "המניין הקרוב ביותר הוא: ";
+                if (isShabbatMode) {
+                    prefix = isTomorrow ? "תפילות השבת הבאות הן: " : "המניין הבא לשבת הוא: ";
+                } else {
+                    prefix = isTomorrow ? "לא נותרו מניינים להיום. מנייני מחר הם: " : "המניין הקרוב ביותר לחול הוא: ";
+                }
             } else {
-                if (currentIndex === 0 && lastMove === '2') prefix = "זהו מניין החול הראשון. ";
-                if (currentIndex === weekdayMinyanim.length - 1 && lastMove === '1') prefix = "זהו מניין החול האחרון. ";
+                if (currentIndex === 0 && lastMove === '2') prefix = `זהו מניין ה${currentModeLabel} הראשון. `;
+                if (currentIndex === activeMinyanim.length - 1 && lastMove === '1') prefix = `זהו מניין ה${currentModeLabel} האחרון. `;
             }
 
             textToRead = cleanForTTS(`${prefix} תפילת ${m.type} בשעה ${m.time}`);
         }
 
-        // עדכון התפריט הקולי שיכלול את מקש 5
+        // עדכון התפריט הקולי
         const menu = cleanForTTS("לשמיעה חוזרת הקש אפס. למניין הבא אחת. לקודם שתיים. לכל מנייני החול שלוש. למנייני שבת חמש. ליציאה ארבע.");
         const responseString = `read=t-${textToRead} ${menu}=menu_choice,number,1,1,7,no,no,no`;
         
