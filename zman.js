@@ -74,20 +74,6 @@ function formatMinyanName(name) {
     return cleanName; // זמנים כמו שקיעה, או סדרי לימוד כמו אבות ובנים, יוקראו ללא הקידומת "תפילת" [1]
 }
 
-// פונקציה חכמה למשיכת שם פרשת השבוע באופן דינמי
-async function getParashaName(lyear, lmonth, lday) {
-    try {
-        const response = await axios.get(`https://www.hebcal.com/shabbat?cfg=json&geonameid=293397&gy=${lyear}&gm=${lmonth}&gd=${lday}`, { timeout: 3000 });
-        const parashaItem = response.data.items.find(item => item.category === "parashat");
-        if (parashaItem && parashaItem.hebrew) {
-            return parashaItem.hebrew; // מחזיר למשל: "פרשת נשא" [1]
-        }
-    } catch (e) {
-        console.error("[ERROR] Failed to fetch parasha:", e.message);
-    }
-    return "";
-}
-
 // פונקציה מרכזית למשיכת הנתונים וחלוקתם חול/שבת בצורה בטוחה
 async function fetchAndParseMinyanim() {
     const now = new Date();
@@ -112,7 +98,28 @@ async function fetchAndParseMinyanim() {
     let weekdayMinyanim = [];
     let shabbatMinyanim = [];
     let seenMinyanim = new Set(); 
+    let parashaName = ""; // שלילת שם הפרשה ישירות מהלוח [1]
 
+    // 1. שליפת שם הפרשה ישירות מתוך המבנה המקומי של Cnfg [1]
+    if (resData && resData.Cnfg) {
+        const cnfgObj = typeof resData.Cnfg === 'string'
+            ? JSON.parse(resData.Cnfg)
+            : resData.Cnfg;
+        
+        if (cnfgObj && cnfgObj.columns && cnfgObj.data) {
+            const cnfgNameIdx = cnfgObj.columns.indexOf("Name");
+            const cnfgValIdx = cnfgObj.columns.indexOf("Value");
+            
+            for (let cnfgRow of cnfgObj.data) {
+                if (cnfgRow[cnfgNameIdx] === "parasha") {
+                    parashaName = cnfgRow[cnfgValIdx] || "";
+                    break;
+                }
+            }
+        }
+    }
+
+    // 2. שליפת מניינים מתוך All_Styles_Elements
     if (resData && resData.All_Styles_Elements) {
         const elements = typeof resData.All_Styles_Elements === 'string' 
             ? JSON.parse(resData.All_Styles_Elements) 
@@ -218,7 +225,7 @@ async function fetchAndParseMinyanim() {
     }
 
     // מנייני השבת (שבת בוקר עד מוצ"ש) נשארים ללא מיון כדי לשמור על הסדר המקורי של הלוח
-    return { weekdayMinyanim, shabbatMinyanim, israelTime };
+    return { weekdayMinyanim, shabbatMinyanim, israelTime, parashaName };
 }
 
 
@@ -244,14 +251,10 @@ app.get('/minyan', async (req, res) => {
     }
 
     try {
-        const { weekdayMinyanim, shabbatMinyanim, israelTime } = await fetchAndParseMinyanim();
+        const { weekdayMinyanim, shabbatMinyanim, israelTime, parashaName } = await fetchAndParseMinyanim();
         const curMin = israelTime.getHours() * 60 + israelTime.getMinutes();
         const dayOfWeek = israelTime.getDay();
         const currentHour = israelTime.getHours();
-
-        const lyear = israelTime.getFullYear();
-        const lmonth = israelTime.getMonth() + 1;
-        const lday = israelTime.getDate();
 
         // הגדרת מצב שבת/חול לפי השעות שביקשת
         let isShabbatMode = false;
@@ -272,11 +275,8 @@ app.get('/minyan', async (req, res) => {
 
         // מציאת שם הפרשה הנוכחית להשמעה רק במצב שבת [1]
         let parashaStr = "";
-        if (isShabbatMode) {
-            const parashaName = await getParashaName(lyear, lmonth, lday);
-            if (parashaName) {
-                parashaStr = ` ${parashaName}`; // למשל: " פרשת נשא" [1]
-            }
+        if (isShabbatMode && parashaName) {
+            parashaStr = ` ${parashaName.trim()}`; // מוסיף למשל " פרשת שלח לך" [1]
         }
 
         // מציאת האינדקס של המניין הבא
