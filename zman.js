@@ -339,7 +339,30 @@ app.get('/shabbat', async (req, res) => {
         const { shabbatMinyanim } = await fetchAndParseMinyanim();
 
         if (shabbatMinyanim.length === 0) {
-            return res.send(`id_list_message=t-לא נמצאו מנייני שבת מוגדרים בלוח&hangup=yes`);
+            return res.send(`id_list_message=t-לא נמצאו מניינים מעודכנים בלוח&hangup=yes`);
         }
 
-        const lastMove = hist
+        const lastMove = history.length > 0 ? history[history.length - 1] : null;
+
+        if (lastMove === '4') {
+            return res.send(`id_list_message=t-להתראות&hangup=yes`);
+        }
+
+        // מקריא ישירות את כל המניינים ברצף בסדר כרונולוגי טבעי ומדוייק (ערב שבת -> שבת בוקר -> מוצ"ש) [1]
+        let allShabbat = shabbatMinyanim.map(m => `${m.type} בשעה ${m.time}`).join('. ');
+        let textToRead = cleanForTTS("מנייני השבת הם: " + allShabbat);
+
+        // שינוי הפרמטרים של read ל- "no" ו- "No" כדי לבטל אישורי הקשה מעצבנים בימות המשיח
+        const menu = cleanForTTS("לשמיעה חוזרת הקש אפס. ליציאה ארבע.");
+        const responseString = `read=t-${textToRead} ${menu}=menu_choice,no,1,1,7,No,No,`;
+        
+        res.send(responseString);
+        console.log(`[LOG - שבת] הושמע: ${textToRead}`);
+
+    } catch (error) {
+        console.error("[ERROR - שבת]", error.message);
+        res.send(`id_list_message=t-שגיאה בתקשורת עם שרת הלוח&hangup=yes`);
+    }
+});
+
+app.listen(port, () => console.log(`Minyanim Server running on port ${port}`));
