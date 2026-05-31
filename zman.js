@@ -66,13 +66,26 @@ function cleanForTTS(str) {
 // פונקציית עזר להצמדת המילה "תפילת" רק עבור תפילות ממשיות
 function formatMinyanName(name) {
     const cleanName = name.trim();
-    // בדיקה האם מדובר באחת מהתפילות המרכזיות
     const isMainPrayer = ["שחרית", "מנחה", "מעריב", "ערבית", "מוסף"].some(keyword => cleanName.includes(keyword));
     
     if (isMainPrayer) {
         return `תפילת ${cleanName}`;
     }
     return cleanName; // זמנים כמו שקיעה, או סדרי לימוד כמו אבות ובנים, יוקראו ללא הקידומת "תפילת" [1]
+}
+
+// פונקציה חכמה למשיכת שם פרשת השבוע באופן דינמי
+async function getParashaName(lyear, lmonth, lday) {
+    try {
+        const response = await axios.get(`https://www.hebcal.com/shabbat?cfg=json&geonameid=293397&gy=${lyear}&gm=${lmonth}&gd=${lday}`, { timeout: 3000 });
+        const parashaItem = response.data.items.find(item => item.category === "parashat");
+        if (parashaItem && parashaItem.hebrew) {
+            return parashaItem.hebrew; // מחזיר למשל: "פרשת נשא" [1]
+        }
+    } catch (e) {
+        console.error("[ERROR] Failed to fetch parasha:", e.message);
+    }
+    return "";
 }
 
 // פונקציה מרכזית למשיכת הנתונים וחלוקתם חול/שבת בצורה בטוחה
@@ -236,6 +249,10 @@ app.get('/minyan', async (req, res) => {
         const dayOfWeek = israelTime.getDay();
         const currentHour = israelTime.getHours();
 
+        const lyear = israelTime.getFullYear();
+        const lmonth = israelTime.getMonth() + 1;
+        const lday = israelTime.getDate();
+
         // הגדרת מצב שבת/חול לפי השעות שביקשת
         let isShabbatMode = false;
         if (dayOfWeek === 5) {
@@ -252,6 +269,15 @@ app.get('/minyan', async (req, res) => {
 
         const activeMinyanim = isShabbatMode ? shabbatMinyanim : weekdayMinyanim;
         const currentModeLabel = isShabbatMode ? "שבת" : "חול";
+
+        // מציאת שם הפרשה הנוכחית להשמעה רק במצב שבת [1]
+        let parashaStr = "";
+        if (isShabbatMode) {
+            const parashaName = await getParashaName(lyear, lmonth, lday);
+            if (parashaName) {
+                parashaStr = ` ${parashaName}`; // למשל: " פרשת נשא" [1]
+            }
+        }
 
         // מציאת האינדקס של המניין הבא
         let startIndex = activeMinyanim.findIndex(m => m.minutes >= curMin);
@@ -300,7 +326,7 @@ app.get('/minyan', async (req, res) => {
             
             if (history.length === 0) {
                 if (isShabbatMode) {
-                    prefix = isTomorrow ? "תפילת השבת הבאה היא: " : "המניין הבא לשבת הוא: ";
+                    prefix = isTomorrow ? `תפילת השבת הבאה${parashaStr} היא: ` : `המניין הבא לשבת${parashaStr} הוא: `;
                 } else {
                     prefix = isTomorrow ? "לא נותרו מניינים להיום. מנייני מחר הם: " : "המניין הקרוב ביותר הוא: ";
                 }
@@ -373,6 +399,72 @@ app.get('/shabbat', async (req, res) => {
 
     } catch (error) {
         console.error("[ERROR - שבת]", error.message);
+        res.send(`id_list_message=t-שגיאה בתקשורת עם שרת הלוח&hangup=yes`);
+    }
+});
+
+
+// ==========================================
+// 3. הקישור החדש: הקראה מלאה של כל מנייני היום הנוכחי (חול או שבת בהתאם לזמן)
+// ==========================================
+app.get('/all', async (req, res) => {
+    // מניעת שמירה בזיכרון (Cache) [1]
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
+    const timeLog = new Date().toLocaleTimeString('he-IL', { timeZone: 'Asia/Jerusalem' });
+    console.log(`\n\n========== [${timeLog}] פנייה חדשה: הקראה מלאה של כל מנייני היום ==========`);
+
+    let history = [];
+    if (Array.isArray(req.query.menu_choice)) {
+        history = req.query.menu_choice;
+    } else if (req.query.menu_choice) {
+        history = [req.query.menu_choice];
+    }
+
+    try {
+        const { weekdayMinyanim, shabbatMinyanim, israelTime } = await fetchAndParseMinyanim();
+        const dayOfWeek = israelTime.getDay();
+        const currentHour = israelTime.getHours();
+
+        // קביעת מצב שבת/חול בהתאם לזמן הנוכחי
+        let isShabbatMode = false;
+        if (dayOfWeek === 5) {
+            isShabbatMode = (currentHour >= 14);
+        } else if (dayOfWeek === 6) {
+            isShabbatMode = (currentHour < 19);
+        } else {
+            isShabbatMode = false;
+        }
+
+        const lastMove = history.length > 0 ? history[history.length - 1] : null;
+
+        if (lastMove === '4') {
+            return res.send(`id_list_message=t-להתראות&hangup=yes`);
+        }
+
+        const activeMinyanim = isShabbatMode ? shabbatMinyanim : weekdayMinyanim;
+        const currentModeLabel = isShabbatMode ? "שבת" : "חול";
+
+        if (activeMinyanim.length === 0) {
+            return res.send(`id_list_message=t-לא נמצאו מניינים מוגדרים&hangup=yes`);
+        }
+
+        // בניית רשימה מלאה של כל המניינים הפעילים כעת [1]
+        let allMinyanimStr = activeMinyanim.map(m => `${formatMinyanName(m.type)} בשעה ${m.time}`).join('. ');
+        let textToRead = cleanForTTS(`כל מנייני ה${currentModeLabel} לזמן זה הם: ` + allMinyanimStr);
+
+        // תפריט פשוט לשמיעה חוזרת או יציאה
+        const menu = cleanForTTS("לשמיעה חוזרת הקש אפס. ליציאה ארבע.");
+        const responseString = `read=t-${textToRead} ${menu}=menu_choice,no,1,1,7,No,No,`;
+
+        res.send(responseString);
+        console.log(`[LOG - הכל] הושמע: ${textToRead}`);
+
+    } catch (error) {
+        console.error("[ERROR - הכל]", error.message);
         res.send(`id_list_message=t-שגיאה בתקשורת עם שרת הלוח&hangup=yes`);
     }
 });
