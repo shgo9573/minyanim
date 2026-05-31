@@ -71,6 +71,10 @@ async function fetchAndParseMinyanim() {
     const lyear = israelTime.getFullYear();
     const lmonth = israelTime.getMonth() + 1; 
     const lday = israelTime.getDate();
+    const dayOfWeek = israelTime.getDay(); // 0 = ראשון, 5 = שישי, 6 = שבת
+
+    console.log(`[LOG] תאריך השרת הנוכחי (שעון ישראל): ${israelTime.toString()}`);
+    console.log(`[LOG] תאריך חילוץ ללוח: Lday=${lday}, Lmonth=${lmonth}, Lyear=${lyear} | יום בשבוע: ${dayOfWeek}`);
 
     const TARGET_URL = `https://zmanimboard.com/GetAllClientData.aspx/?CL_ID=1287&Lyear=${lyear}&Lmonth=${lmonth}&Lday=${lday}&UserPass=Bc3456`;
     
@@ -169,10 +173,26 @@ async function fetchAndParseMinyanim() {
         }
     }
     
-    // מיון כרונולוגי של מנייני החול בלבד [1]
-    // מנייני השבת נשארים ללא מיון כדי לשמור על הסדר המקורי והמדויק של הלוח (ערב שבת -> שבת בבוקר -> מוצ"ש) [1]
+    // מיון כרונולוגי של מנייני החול
     weekdayMinyanim.sort((a, b) => a.minutes - b.minutes);
 
+    // מנגנון מיזוג חכם ליום שישי:
+    // מחבר את תפילות שחרית חול של יום שישי, יחד עם מנחה של ערב שבת וערבית של ליל שבת, לציר זמן אחד מושלם!
+    if (dayOfWeek === 5) {
+        const fridayShabbatPrayers = shabbatMinyanim.filter(m => 
+            m.type.includes('עש"ק') || 
+            m.type.includes('עשק') || 
+            m.type.includes('הדל"נ') || 
+            m.type === 'מעריב' ||
+            (m.type === 'שקיעה' && m.minutes < 1185) // שקיעה של ערב שבת (19:44)
+        );
+        
+        weekdayMinyanim = [...weekdayMinyanim, ...fridayShabbatPrayers];
+        // מיון כרונולוגי מחדש של יום שישי המשולב והשלם
+        weekdayMinyanim.sort((a, b) => a.minutes - b.minutes);
+    }
+
+    // מנייני השבת (שבת בוקר עד מוצ"ש) נשארים ללא מיון כדי לשמור על הסדר המקורי של הלוח
     return { weekdayMinyanim, shabbatMinyanim, israelTime };
 }
 
@@ -181,7 +201,12 @@ async function fetchAndParseMinyanim() {
 // 1. הנתיב הראשי: משולב (חול ושבת לפי השעות שביקשת)
 // ==========================================
 app.get('/minyan', async (req, res) => {
+    // מניעת שמירה בזיכרון (Cache) של ימות המשיח או כל שרת בדרך [1]
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate'); // מניעת קאש מוחלטת [1]
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
     const timeLog = new Date().toLocaleTimeString('he-IL', { timeZone: 'Asia/Jerusalem' });
 
     console.log(`\n\n========== [${timeLog}] פנייה חדשה: משולב חול/שבת ==========`);
@@ -293,7 +318,12 @@ app.get('/minyan', async (req, res) => {
 // 2. הקישור הייעודי: שבת בלבד (הקראה מלאה ברצף)
 // ==========================================
 app.get('/shabbat', async (req, res) => {
+    // מניעת שמירה בזיכרון (Cache) של ימות המשיח או כל שרת בדרך [1]
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate'); // מניעת קאש מוחלטת [1]
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
     const timeLog = new Date().toLocaleTimeString('he-IL', { timeZone: 'Asia/Jerusalem' });
 
     console.log(`\n\n========== [${timeLog}] פנייה חדשה: שבת בלבד (הקראה מלאה ברצף) ==========`);
@@ -312,27 +342,4 @@ app.get('/shabbat', async (req, res) => {
             return res.send(`id_list_message=t-לא נמצאו מנייני שבת מוגדרים בלוח&hangup=yes`);
         }
 
-        const lastMove = history.length > 0 ? history[history.length - 1] : null;
-
-        if (lastMove === '4') {
-            return res.send(`id_list_message=t-להתראות&hangup=yes`);
-        }
-
-        // מקריא ישירות את כל המניינים ברצף בסדר כרונולוגי טבעי ומדוייק (ערב שבת -> שבת בוקר -> מוצ"ש) [1]
-        let allShabbat = shabbatMinyanim.map(m => `${m.type} בשעה ${m.time}`).join('. ');
-        let textToRead = cleanForTTS("מנייני השבת הם: " + allShabbat);
-
-        // שינוי הפרמטרים של read ל- "no" ו- "No" כדי לבטל אישורי הקשה מעצבנים בימות המשיח
-        const menu = cleanForTTS("לשמיעה חוזרת הקש אפס. ליציאה ארבע.");
-        const responseString = `read=t-${textToRead} ${menu}=menu_choice,no,1,1,7,No,No,`;
-        
-        res.send(responseString);
-        console.log(`[LOG - שבת] הושמע: ${textToRead}`);
-
-    } catch (error) {
-        console.error("[ERROR - שבת]", error.message);
-        res.send(`id_list_message=t-שגיאה בתקשורת עם שרת הלוח&hangup=yes`);
-    }
-});
-
-app.listen(port, () => console.log(`Minyanim Server running on port ${port}`));
+        const lastMove = hist
