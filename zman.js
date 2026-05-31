@@ -63,6 +63,18 @@ function cleanForTTS(str) {
     return cleaned.replace(/[.\-"&%=]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+// פונקציית עזר להצמדת המילה "תפילת" רק עבור תפילות ממשיות
+function formatMinyanName(name) {
+    const cleanName = name.trim();
+    // בדיקה האם מדובר באחת מהתפילות המרכזיות
+    const isMainPrayer = ["שחרית", "מנחה", "מעריב", "ערבית", "מוסף"].some(keyword => cleanName.includes(keyword));
+    
+    if (isMainPrayer) {
+        return `תפילת ${cleanName}`;
+    }
+    return cleanName; // זמנים כמו שקיעה, או סדרי לימוד כמו אבות ובנים, יוקראו ללא הקידומת "תפילת" [1]
+}
+
 // פונקציה מרכזית למשיכת הנתונים וחלוקתם חול/שבת בצורה בטוחה
 async function fetchAndParseMinyanim() {
     const now = new Date();
@@ -272,14 +284,14 @@ app.get('/minyan', async (req, res) => {
             if (weekdayMinyanim.length === 0) {
                 textToRead = "לא נמצאו מנייני חול מוגדרים בלוח.";
             } else {
-                let all = weekdayMinyanim.map(m => `תפילת ${m.type} בשעה ${m.time}`).join('. ');
+                let all = weekdayMinyanim.map(m => `${formatMinyanName(m.type)} בשעה ${m.time}`).join('. ');
                 textToRead = cleanForTTS("רשימת כל מנייני החול היא: " + all);
             }
         } else if (lastMove === '5') {
             if (shabbatMinyanim.length === 0) {
                 textToRead = "לא נמצאו מנייני שבת מוגדרים בלוח.";
             } else {
-                let allShabbat = shabbatMinyanim.map(m => `${m.type} בשעה ${m.time}`).join('. ');
+                let allShabbat = shabbatMinyanim.map(m => `${formatMinyanName(m.type)} בשעה ${m.time}`).join('. ');
                 textToRead = cleanForTTS("מנייני השבת הם: " + allShabbat);
             }
         } else {
@@ -297,7 +309,7 @@ app.get('/minyan', async (req, res) => {
                 if (currentIndex === activeMinyanim.length - 1 && lastMove === '1') prefix = `זהו מניין ה${currentModeLabel} האחרון. `;
             }
 
-            textToRead = cleanForTTS(`${prefix} תפילת ${m.type} בשעה ${m.time}`);
+            textToRead = cleanForTTS(`${prefix} ${formatMinyanName(m.type)} בשעה ${m.time}`);
         }
 
         // שינוי הפרמטרים של read ל- "no" ו- "No" כדי לבטל אישורי הקשה מעצבנים בימות המשיח
@@ -349,7 +361,7 @@ app.get('/shabbat', async (req, res) => {
         }
 
         // מקריא ישירות את כל המניינים ברצף בסדר כרונולוגי טבעי ומדוייק (ערב שבת -> שבת בוקר -> מוצ"ש) [1]
-        let allShabbat = shabbatMinyanim.map(m => `${m.type} בשעה ${m.time}`).join('. ');
+        let allShabbat = shabbatMinyanim.map(m => `${formatMinyanName(m.type)} בשעה ${m.time}`).join('. ');
         let textToRead = cleanForTTS("מנייני השבת הם: " + allShabbat);
 
         // שינוי הפרמטרים של read ל- "no" ו- "No" כדי לבטל אישורי הקשה מעצבנים בימות המשיח
